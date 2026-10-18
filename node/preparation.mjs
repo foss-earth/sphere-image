@@ -32,6 +32,8 @@
  *   --url-prefix media/garden/    prefix for the fragment's relative URLs
  *   --out dir                     output folder; default a new dated build/prepared-scenes/ folder
  *   --replace                     allow writing into an existing non-empty folder
+ *   --native-tier typescript|typescript-worker|single|auto|threaded  projection backend (typescript)
+ *   --projection-module path      native-projections/index.js for opt-in single-worker WASM
  *
  * Nothing is fetched from the network.
  */
@@ -151,6 +153,7 @@ export function prepareSphere(argv, ports = {}) {
     const help = readFileSync(scriptPath, "utf8").split("*/")[0];
     (ports.log ?? console.log)(help); return { exitCode: options.help ? 0 : 1, help };
   }
+  if (["single", "typescript-worker", "threaded"].includes(options["native-tier"]) && !ports.projectionReport) throw new Error("Use prepareSphereAsync or the CLI for worker projection tiers");
   const previewSizes = sizes(options["preview-face-sizes"], "preview-face-sizes");
   if (previewSizes.length === 0) throw new Error("--preview-face-sizes needs at least one size: every panorama needs a preview cube");
   const immersionWidths = sizes(options["immersion-widths"], "immersion-widths");
@@ -208,7 +211,7 @@ export function prepareSphere(argv, ports = {}) {
     let encodedBytes = 0;
     for (const face of CUBE_FACE_NAMES) {
       const relative = `preview-${size}/${face}.${extension}`;
-      encodedBytes += write(relative, encode(toSrgbImage(renderCubeFace(cubePreparationPlan(pyramid, size), face, size))), size, size);
+      encodedBytes += write(relative, encode(toSrgbImage(renderCubeFace(cubePreparationPlan(pyramid, size), face, size, ports.projectionKernel))), size, size);
       faces[face] = `${prefix}${relative}`;
     }
     representations.push({ id: `preview-${size}`, role: "preview", projection: "cube", faceSize: size, mimeType, encodedBytes, faces });
@@ -231,7 +234,7 @@ export function prepareSphere(argv, ports = {}) {
       CUBE_FACE_NAMES.forEach(face => {
         for (let y = 0; y < size / tileSize; y++) for (let x = 0; x < size / tileSize; x++) {
           const relative = `${folder}/${face}/${level}/${x}/${y}.${extension}`;
-          const bytes = encode(toSrgbImage(renderCubeTile(cubePreparationPlan(pyramid, size), face, size, warp, TILE_GUTTER, tileSize, x, y)));
+          const bytes = encode(toSrgbImage(renderCubeTile(cubePreparationPlan(pyramid, size), face, size, warp, TILE_GUTTER, tileSize, x, y, ports.projectionKernel)));
           const file = path.join(out, relative);
           mkdirSync(path.dirname(file), { recursive: true });
           writeFileSync(file, bytes);
@@ -277,6 +280,7 @@ export function prepareSphere(argv, ports = {}) {
     settings,
     processing: "EXIF orientation applied once; colour checked as sRGB and not converted; opaque alpha dropped; resampled in linear light and encoded to sRGB once. Faces follow the format's cube table; tiled faces carry a gutter resampled past their edges.",
     outputs,
+    nativeCores: [ports.projectionReport?.() ?? { core: "projections", requested: options["native-tier"] ?? "typescript", actual: "typescript", placement: "original", state: "ready", parity: "not-run", scope: "cube faces and tiled/gutter equirectangular reprojection" }],
     ...(tileSets.length ? { tiles: tileSets } : {}),
   };
   writeFileSync(path.join(out, "prepared.json"), `${JSON.stringify(provenance, null, 2)}\n`);
@@ -284,3 +288,5 @@ export function prepareSphere(argv, ports = {}) {
   (ports.log ?? console.log)(`Prepared ${assetId} (${image.width}×${image.height}) into ${path.relative(process.cwd(), out) || "."}: ${outputs.length + tileFiles} files, ${outputs.reduce((sum, entry) => sum + entry.bytes, 0) + tileBytes} bytes.`);
   return { exitCode: 0, out, fragment, provenance };
 }
+
+export { prepareSphereAsync } from "./projection-preparation.mjs";
