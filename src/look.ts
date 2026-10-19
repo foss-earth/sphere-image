@@ -12,7 +12,7 @@ export interface LookState {
 }
 
 export interface LookSettings {
-  /** Direct image contact by default; `scroll` turns by relative XY movement without an anchor. */
+  /** Relative XY scrolling by default; `grab` holds the image point under the contact. */
   dragMode?: "grab" | "scroll";
   /** deg per CSS px without a measured viewport: `scene.panorama.dragSensitivity`. */
   dragSensitivity: number;
@@ -172,7 +172,7 @@ export function createLookModel(initial: LookState, settings: () => LookSettings
       const current = settings();
       let next: LookState;
       let heading: number, pitch: number;
-      if (current.dragMode === "scroll") {
+      if (current.dragMode !== "grab") {
         grab = null;
         marker = null;
         const gain = view ? 2 * swipeFovScale(state.verticalFovDeg) / view.height * RAD_TO_DEG : current.dragSensitivity;

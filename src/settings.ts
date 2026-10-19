@@ -251,7 +251,7 @@ const SPHERE_SETTINGS: readonly ParameterSpec[] = [
       { id: "grab", label: "Grab", description: "Keep the image point under the finger, with an upright horizon." },
       { id: "scroll", label: "Scroll", description: "Turn by the finger's movement, independent of where it touches, scaled with zoom." },
     ],
-    default: "grab", defaultReason: "Keeps the existing point-grab behavior until Scroll is selected.",
+    default: "scroll", defaultReason: "Keeps dragging predictable from the top, middle and bottom of the screen.",
     home: { tab: SPHERE_SETTINGS_TAB, section: "looking", level: "main" }, appliesLive: true, source: "src/look.ts",
   },
   {

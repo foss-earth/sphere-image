@@ -117,7 +117,7 @@ describe("measured sphere pan input", () => {
     canvas.setPointerCapture = vi.fn();
     canvas.releasePointerCapture = vi.fn();
     document.body.append(canvas);
-    const settings = { ...SETTINGS, fovRangeDeg: { min: 10, max: 150 } };
+    const settings: LookSettings = { ...SETTINGS, dragMode: "grab", fovRangeDeg: { min: 10, max: 150 } };
     const model = createLookModel({ headingDeg: 0.1, pitchDeg: 8, verticalFovDeg: 10 }, () => settings, () => {}, () => viewport);
     const input = attachLookInput({
       canvas, model, window, controlTakesKey, createWheelGestureClassifier,

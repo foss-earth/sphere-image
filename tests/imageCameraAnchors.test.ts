@@ -6,6 +6,7 @@ import { projectSphereRay, sphereRay, type SphereCamera, type SpherePoint, type 
 const viewport = { width: 800, height: 600 };
 const initial: SphereCamera = { headingDeg: 30, pitchDeg: 8, verticalFovDeg: 60 };
 const settings: LookSettings = {
+  dragMode: "grab",
   dragSensitivity: 0.15, swipeSensitivity: 0.1, lookRate: 90, zoomPerNotch: 0.1, zoomRate: 0.5, pinchGain: 1, inertiaHalfLifeMs: 100,
   fovRangeDeg: { min: 1, max: 150 }, pitchRangeDeg: { min: -85, max: 85 }, reducedMotion: false,
 };

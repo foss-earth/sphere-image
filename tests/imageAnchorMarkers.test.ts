@@ -7,6 +7,7 @@ import { projectSphereRay, sphereRay, type SpherePoint } from "../src/sphereCame
 const viewport = { width: 800, height: 600 };
 const offset = { x: 130, y: 75 };
 const settings: LookSettings = {
+  dragMode: "grab",
   dragSensitivity: 0.15, swipeSensitivity: 0.1, lookRate: 90, zoomPerNotch: 0.1, zoomRate: 0.5, pinchGain: 1, inertiaHalfLifeMs: 100,
   fovRangeDeg: { min: 10, max: 150 }, pitchRangeDeg: { min: -85, max: 85 }, reducedMotion: false,
 };

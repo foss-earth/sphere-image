@@ -4,6 +4,7 @@ import { createLookModel, swipeFovScale, zoomFov, type LookSettings } from "../s
 import { projectSphereRay, sphereRay, type SphereCamera } from "../src/sphereCamera.js";
 
 const settings: LookSettings = {
+  dragMode: "grab",
   dragSensitivity: 0.15, swipeSensitivity: 0.1, lookRate: 90, zoomPerNotch: 0.1, zoomRate: 0.5, pinchGain: 1, inertiaHalfLifeMs: 0,
   fovRangeDeg: { min: 10, max: 150 }, pitchRangeDeg: { min: -85, max: 85 }, reducedMotion: true,
 };
@@ -24,6 +25,22 @@ describe("shared sphere look", () => {
   describe("relative XY drag", () => {
     const scrollSettings: LookSettings = { ...settings, dragMode: "scroll" };
     const phone = { width: 390, height: 780 };
+
+    it("uses relative XY drag when no mode is supplied", () => {
+      const defaults = { ...settings };
+      delete defaults.dragMode;
+      const initial = { headingDeg: 0, pitchDeg: 40, verticalFovDeg: 100 };
+      const fromTop = createLookModel(initial, () => defaults, () => {}, () => phone);
+      const fromBottom = createLookModel(initial, () => defaults, () => {}, () => phone);
+      const explicit = createLookModel(initial, () => scrollSettings, () => {}, () => phone);
+      fromTop.drag(120, 10, 16, { x: 195, y: 78 });
+      fromBottom.drag(120, 10, 16, { x: 195, y: 702 });
+      explicit.drag(120, 10, 16, { x: 195, y: 390 });
+      expect(fromTop.get()).toEqual(explicit.get());
+      expect(fromBottom.get()).toEqual(explicit.get());
+      expect(fromTop.anchor()).toBeNull();
+      expect(fromBottom.anchor()).toBeNull();
+    });
 
     it.each([0, 40, -40, 60, -60])("pans equally from the top, middle and bottom at pitch %s, then retraces the drag", pitchDeg => {
       const initial = { headingDeg: 0, pitchDeg, verticalFovDeg: 100 };

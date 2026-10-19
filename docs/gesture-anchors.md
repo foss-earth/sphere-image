@@ -14,7 +14,7 @@ These controls live in **360 image settings → Looking** unless noted otherwise
 
 | Setting | Behavior |
 | --- | --- |
-| `scene.panorama.dragMode` | **Drag → Grab / Scroll**, default Grab. Applies to one-finger and mouse drags in the full viewer and scene previews. |
+| `scene.panorama.dragMode` | **Drag → Grab / Scroll**, default Scroll. Applies to one-finger and mouse drags in the full viewer and scene previews. |
 | `scene.panorama.verticalFovRange` | Default vertical FOV range 20–140°. Allowed setting bounds 10–150°. |
 | `scene.panorama.entryFov` | Default 100°, bounded to 10–150° and the selected zoom range; under Entering. |
 | `scene.panorama.showAnchors` | Show anchors, off by default; independent of the map's `input.showNavigationAnchors`. |
@@ -31,7 +31,7 @@ Coordinates and viewport dimensions must use the same measured CSS rectangle,
 including its offset from the whole canvas. Backing-store resolution and device
 pixel ratio do not change these input units.
 
-A one-finger or mouse drag retains its ray across consecutive moves. Two-touch
+In Grab mode, a one-finger or mouse drag retains its ray across consecutive moves. Two-touch
 pan and pinch retain the ray through the initial midpoint while combining
 midpoint motion and separation changes in one camera update.
 
@@ -41,8 +41,9 @@ regardless of cursor position, and shows no anchor marker. Both trackpad swipes
 and wheel/pinch zoom feed impulses into the look model's velocity and decay across
 frames with `inertiaHalfLife`, matching the map's `InertialCameraController`.
 
-The solver stops at the last feasible pose near a pitch limit without rolling
-the camera or jumping to the other mathematical branch. Keep the original ray
+The solver is intended to stop at the last feasible pose near a pitch limit
+without rolling the camera or jumping to the other mathematical branch. The
+near-pole reversal limitation below remains unresolved. Keep the original ray
 when the desired destination becomes unreachable. Its actual projection is
 the next solve's source, so reversing the gesture can bring the same point
 back. Recasting at the cursor on every event loses this behavior.
@@ -65,6 +66,61 @@ while looking up, or bottom while looking down, can select a ray near the
 sphere's pole. Keeping that ray under arbitrary finger motion while keeping
 the horizon upright is not always possible, and heading can become very
 sensitive before the exact-contact solve stops.
+
+## Why Scroll became the default
+
+On 19 October 2026, after trying Scroll on an Android phone, the tour's user
+reported that it felt much better and requested it as the default, with the
+existing inertia retained. The original complaint concerned where the finger
+first touched the screen, especially near its top or bottom. This is
+**edge-dependent anchor instability**, rather than a universal screen-edge
+failure or evidence of lost Android touch events.
+
+Grab ties the camera response to the world direction initially touched.
+Looking somewhat up and touching near the top can select a direction close to
+the sphere's pole. An upright camera cannot move that fixed direction along
+every arbitrary screen path: heading sensitivity grows sharply, then the
+exact-contact solution becomes unreachable. This can happen far below the
+camera's pitch limit. Looking down and touching near the bottom mirrors it.
+
+A source-model replay made the distinction concrete. With a 390 × 780 CSS-pixel
+viewport, vertical FOV 100°, heading 0° and pitch 40°, start at x195 and drag
+right by 120 pixels in 2-pixel steps, without releasing:
+
+| Contact y | Grab response | Scroll response |
+| --- | --- | --- |
+| 78 (top) | Turns 90° and stalls after about 50.45 pixels; pitch reaches 46.37°. | Turns 21.01°, preserving pitch 40°. |
+| 390 (middle) | Turns 26.71°; pitch reaches 43.21°. | The same 21.01° turn, preserving pitch 40°. |
+| 702 (bottom) | Turns 14.89°; pitch reaches 39.87°. | The same 21.01° turn, preserving pitch 40°. |
+
+The top contact's world latitude is 83.63°, although camera pitch is only 40°.
+At a level view, that same horizontal top-edge path tracks correctly in Grab.
+The problem depends on contact position, current pitch and FOV together.
+Scroll gives predictable horizontal and vertical control throughout the screen
+by allowing the originally touched feature to slide. It preserves the upright
+horizon, FOV and release glide; exact feature contact is not its invariant.
+
+The default applies in the model, setting catalogue, app adapter and scene
+previews. An explicit saved Grab choice still wins. Two-touch pinches and wheel
+zoom retain their anchors in either mode. No assumption about Google Maps'
+internal implementation is needed for this decision.
+
+### Remaining Grab limitation
+
+In the top-contact replay above, crossing the reachability boundary and then
+retracing all the way to the starting pixel can leave Grab at heading 180°,
+pitch 52.73°, even though the image anchor returns to its original pixel. Near
+the boundary, two inverse-camera solutions meet; choosing the nearest forward
+direction does not preserve the gesture's original branch. Scroll bypasses
+that solver; it does not fix Grab's branch continuity. Recasting the contact on
+every event or replacing angle storage with quaternions alone does not remove
+the upright camera's reachability constraint.
+
+These numbers come from the actual `createLookModel` and sphere-camera source,
+not an instrumented Android/browser trace. The user's improved phone experience
+is qualitative feedback. The regression suite checks default Scroll behavior,
+top/middle/bottom equivalence, out-and-back drags, FOV scaling, immediate pitch
+reversal and the retained glide. Deployment is a separate action.
 
 ## Release glide
 

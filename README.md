@@ -90,8 +90,8 @@ The generic Renderer owns that section and its `all` and `presentationCandidates
 
 `./input` takes explicit window, control-key and wheel-classifier ports. Detached handlers do nothing.
 
-Panorama drags offer **Looking → Drag → Grab / Scroll**. Grab holds the touched
-image point; Scroll maps finger movement directly to heading and pitch wherever
+Panorama drags offer **Looking → Drag → Grab / Scroll**, default Scroll.
+Grab holds the touched image point; Scroll maps finger movement directly to heading and pitch wherever
 the drag starts. Both keep release inertia. Touch pinches and zooms hold their
 image point, while trackpad swipes turn heading and pitch directly. **Looking →
 Show anchors** shows map-style markers, off by default. See [panorama gestures
