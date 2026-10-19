@@ -12,6 +12,8 @@ export interface LookState {
 }
 
 export interface LookSettings {
+  /** Direct image contact by default; `scroll` turns by relative XY movement without an anchor. */
+  dragMode?: "grab" | "scroll";
   /** deg per CSS px without a measured viewport: `scene.panorama.dragSensitivity`. */
   dragSensitivity: number;
   /** deg per CSS px of a trackpad swipe at 90° FOV, scaled with tan(fov/2): `scene.panorama.swipeSensitivity`. */
@@ -167,9 +169,17 @@ export function createLookModel(initial: LookState, settings: () => LookSettings
     drag(dx, dy, dtMs, from) {
       if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
       const view = readViewport();
+      const current = settings();
       let next: LookState;
       let heading: number, pitch: number;
-      if (view) {
+      if (current.dragMode === "scroll") {
+        grab = null;
+        marker = null;
+        const gain = view ? 2 * swipeFovScale(state.verticalFovDeg) / view.height * RAD_TO_DEG : current.dragSensitivity;
+        heading = -dx * gain;
+        next = clampLook({ ...state, headingDeg: state.headingDeg + heading, pitchDeg: state.pitchDeg + dy * gain }, current);
+        pitch = next.pitchDeg - state.pitchDeg;
+      } else if (view) {
         const at = from ?? { x: view.width / 2, y: view.height / 2 };
         next = anchored(state, 0, at, { x: at.x + dx, y: at.y + dy }, "drag");
         heading = ((next.headingDeg - state.headingDeg + 540) % 360) - 180;

@@ -3,9 +3,10 @@
 The full panorama and interactive scene previews use the same look model,
 following the shared [Physical UX](https://github.com/foss-earth/docs/blob/main/docs/physical-ux.md)
 principles across the globe and 360 spheres.
-Measured pointer gestures move the image one CSS pixel per input pixel at any
-zoom. Applying a fixed number of degrees per pixel makes a zoomed-in image move
-much faster than the finger; use the sphere camera geometry instead.
+Pointer drags offer **Grab** and **Scroll** modes. Grab moves the touched image
+point one CSS pixel per input pixel wherever an upright camera can hold it.
+Scroll turns heading and pitch by the drag's movement, independent of where
+the finger first touches. Both scale with zoom and keep the same release glide.
 
 ## Settings
 
@@ -13,6 +14,7 @@ These controls live in **360 image settings → Looking** unless noted otherwise
 
 | Setting | Behavior |
 | --- | --- |
+| `scene.panorama.dragMode` | **Drag → Grab / Scroll**, default Grab. Applies to one-finger and mouse drags in the full viewer and scene previews. |
 | `scene.panorama.verticalFovRange` | Default vertical FOV range 20–140°. Allowed setting bounds 10–150°. |
 | `scene.panorama.entryFov` | Default 100°, bounded to 10–150° and the selected zoom range; under Entering. |
 | `scene.panorama.showAnchors` | Show anchors, off by default; independent of the map's `input.showNavigationAnchors`. |
@@ -22,7 +24,7 @@ These controls live in **360 image settings → Looking** unless noted otherwise
 
 ## Hold an image point through the gesture
 
-`createLookModel` in `src/look.ts` casts a common-space ray through the initial
+In Grab mode, `createLookModel` in `src/look.ts` casts a common-space ray through the initial
 surface-local point. `anchorSphereCamera` solves a legal heading and pitch that
 keep that ray at the gesture's desired destination. Pure pans preserve FOV.
 Coordinates and viewport dimensions must use the same measured CSS rectangle,
@@ -44,6 +46,27 @@ the camera or jumping to the other mathematical branch. Keep the original ray
 when the desired destination becomes unreachable. Its actual projection is
 the next solve's source, so reversing the gesture can bring the same point
 back. Recasting at the cursor on every event loses this behavior.
+
+## Scroll without a contact anchor
+
+Scroll maps a drag right to decreasing heading and a drag down to increasing
+pitch. Equal movements give equal turns at the top, middle and bottom of the
+same viewport. It keeps FOV fixed and the horizon upright, and shows no grab
+marker. Pinches and zooms still hold their image point.
+
+The measured gain is `2 * tan(verticalFov / 2) / viewportHeight` radians per CSS
+pixel: the image's angular scale at the view centre. Zooming in therefore
+reduces the turn per pixel. Without a measured viewport, the existing
+`dragSensitivity` fallback supplies the gain. At a pitch limit, excess travel
+is discarded so the first reverse movement responds immediately.
+
+This mode avoids Grab's geometric limitation: a contact near the screen's top
+while looking up, or bottom while looking down, can select a ray near the
+sphere's pole. Keeping that ray under arbitrary finger motion while keeping
+the horizon upright is not always possible, and heading can become very
+sensitive before the exact-contact solve stops.
+
+## Release glide
 
 While a drag is held, frame ticks do not apply its recorded velocity. On
 release, glide uses the camera's actual angular displacement, with heading
@@ -76,7 +99,7 @@ See [globe adapters](globe-bindings.md) for the host ports.
 
 - `tests/sphereInput.test.ts`: projection accuracy from 10° to 150° FOV, retained
   rays, pitch-limit reversal, heading wrap, release velocity and unanchored
-  trackpad swipes.
+  trackpad swipes; Scroll position independence, zoom scaling, limits and glide.
 - `tests/imageCameraAnchors.test.ts`: projected marker geometry, gesture flags,
   glide, subscriptions and missing-camera/viewport behavior.
 - `tests/imageAnchorMarkers.test.ts`: live toggles, unanchored trackpad swipes,

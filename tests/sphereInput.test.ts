@@ -21,6 +21,154 @@ function errorAt(camera: SphereCamera, ray: readonly [number, number, number], p
 }
 
 describe("shared sphere look", () => {
+  describe("relative XY drag", () => {
+    const scrollSettings: LookSettings = { ...settings, dragMode: "scroll" };
+    const phone = { width: 390, height: 780 };
+
+    it.each([0, 40, -40, 60, -60])("pans equally from the top, middle and bottom at pitch %s, then retraces the drag", pitchDeg => {
+      const initial = { headingDeg: 0, pitchDeg, verticalFovDeg: 100 };
+      const turns: SphereCamera[] = [];
+      for (const y of [78, 390, 702]) {
+        const model = createLookModel(initial, () => scrollSettings, () => {}, () => phone);
+        let point = { x: 195, y };
+        for (let frame = 0; frame < 60; frame++) {
+          model.drag(2, 0, 16, point);
+          point = { x: point.x + 2, y };
+        }
+        turns.push(model.get());
+        expect(model.anchor()).toBeNull();
+        expect(model.get().pitchDeg).toBe(pitchDeg);
+        expect(model.get().headingDeg).toBeGreaterThan(330);
+        expect(model.get().headingDeg).toBeLessThan(345);
+        for (let frame = 0; frame < 60; frame++) {
+          model.drag(-2, 0, 16, point);
+          point = { x: point.x - 2, y };
+        }
+        expect(model.get().headingDeg).toBeCloseTo(initial.headingDeg, 8);
+        expect(model.get().pitchDeg).toBe(initial.pitchDeg);
+        expect(model.get().verticalFovDeg).toBe(initial.verticalFovDeg);
+        expect(model.anchor()).toBeNull();
+      }
+      expect(turns[0]).toEqual(turns[1]);
+      expect(turns[1]).toEqual(turns[2]);
+    });
+
+    it.each([20, 90, 140])("scales both axes with the measured view at %s degrees FOV", verticalFovDeg => {
+      const initial = { ...start, verticalFovDeg };
+      const model = createLookModel(initial, () => scrollSettings, () => {}, () => viewport);
+      const gain = 2 * Math.tan(verticalFovDeg * Math.PI / 360) / viewport.height * 180 / Math.PI;
+      model.drag(30, -20, 16, { x: 760, y: 12 });
+      expect(model.get().headingDeg).toBeCloseTo((start.headingDeg - 30 * gain + 360) % 360, 8);
+      expect(model.get().pitchDeg).toBeCloseTo(start.pitchDeg - 20 * gain, 8);
+      expect(model.get().verticalFovDeg).toBe(verticalFovDeg);
+      expect(model.anchor()).toBeNull();
+
+      const larger = createLookModel(initial, () => scrollSettings, () => {}, () => ({ width: 600, height: 1_200 }));
+      larger.drag(60, -40, 16, { x: 10, y: 1_100 });
+      expect(larger.get()).toEqual(model.get());
+    });
+
+    it("uses the live fallback sensitivity without a measured view", () => {
+      let current: LookSettings = { ...scrollSettings, dragSensitivity: 0.4 };
+      const model = createLookModel(start, () => current, () => {});
+      model.drag(12, -8, 16, { x: 10, y: 10 });
+      expect(model.get().headingDeg).toBeCloseTo(25.2, 8);
+      expect(model.get().pitchDeg).toBeCloseTo(4.8, 8);
+      current = { ...current, dragSensitivity: 0.2 };
+      model.drag(12, -8, 16, { x: 10, y: 700 });
+      expect(model.get().headingDeg).toBeCloseTo(22.8, 8);
+      expect(model.get().pitchDeg).toBeCloseTo(3.2, 8);
+      expect(model.anchor()).toBeNull();
+    });
+
+    it.each([-1, 1])("continues horizontally at pitch bound %s and reverses vertically on the first pixel", sign => {
+      const initial = { ...start, pitchDeg: sign * 84 };
+      const model = createLookModel(initial, () => scrollSettings, () => {}, () => viewport);
+      model.drag(0, sign * 100, 16, { x: 400, y: 300 });
+      expect(model.get().pitchDeg).toBe(sign * 85);
+      model.drag(10, sign * 100, 16, { x: 400, y: 300 });
+      expect(model.get().headingDeg).toBeLessThan(start.headingDeg);
+      expect(model.get().pitchDeg).toBe(sign * 85);
+      model.drag(0, -sign, 16, { x: 400, y: 300 });
+      expect(Math.abs(model.get().pitchDeg)).toBeLessThan(85);
+      expect(Math.abs(model.get().pitchDeg)).toBeGreaterThan(84);
+    });
+
+    it("records the clamped pitch displacement for release glide", () => {
+      let current: LookSettings = { ...scrollSettings, inertiaHalfLifeMs: 100, reducedMotion: false };
+      const model = createLookModel({ ...start, pitchDeg: 84.75 }, () => current, () => {}, () => viewport);
+      model.drag(0, 100, 16, { x: 400, y: 300 });
+      expect(model.get().pitchDeg).toBe(85);
+      model.release();
+      // Widening the live limit makes the recorded release speed observable.
+      current = { ...current, pitchRangeDeg: { min: -89.9, max: 89.9 } };
+      model.step(8);
+      expect(model.get().pitchDeg).toBeCloseTo(85.125, 8);
+      expect(model.anchor()).toBeNull();
+    });
+
+    it("clears an earlier grab, holds still between events and glides at its relative drag speed on release", () => {
+      let current: LookSettings = { ...settings, inertiaHalfLifeMs: 100, reducedMotion: false };
+      const model = createLookModel({ ...start, headingDeg: 0.1 }, () => current, () => {}, () => viewport);
+      model.drag(4, 2, 16, { x: 400, y: 300 });
+      expect(model.anchor()).not.toBeNull();
+      current = { ...current, dragMode: "scroll" };
+      const before = model.get();
+      model.drag(12, -5, 16, { x: 400, y: 302 });
+      const after = model.get();
+      const heading = ((after.headingDeg - before.headingDeg + 540) % 360) - 180;
+      const pitch = after.pitchDeg - before.pitchDeg;
+      expect(heading).toBeLessThan(0);
+      expect(pitch).toBeLessThan(0);
+      expect(model.anchor()).toBeNull();
+      expect(model.step(32)).toBe(false);
+      expect(model.get()).toEqual(after);
+      model.release();
+      expect(model.moving()).toBe(true);
+      model.step(8);
+      expect(((model.get().headingDeg - after.headingDeg + 540) % 360) - 180).toBeCloseTo(heading / 2, 8);
+      expect(model.get().pitchDeg - after.pitchDeg).toBeCloseTo(pitch / 2, 8);
+      expect(model.get().verticalFovDeg).toBe(start.verticalFovDeg);
+      expect(model.anchor()).toBeNull();
+
+      const first = model.get();
+      model.step(100);
+      const second = model.get();
+      const firstGlide = ((second.headingDeg - first.headingDeg + 540) % 360) - 180;
+      model.step(100);
+      const secondGlide = ((model.get().headingDeg - second.headingDeg + 540) % 360) - 180;
+      expect(secondGlide).toBeCloseTo(firstGlide / 2, 8);
+      expect(model.get().pitchDeg - second.pitchDeg).toBeCloseTo((second.pitchDeg - first.pitchDeg) / 2, 8);
+      expect(model.anchor()).toBeNull();
+    });
+
+    it.each([
+      { name: "a stationary release", stillMs: 81, halfLife: 100, reducedMotion: false },
+      { name: "reduced motion", stillMs: 0, halfLife: 100, reducedMotion: true },
+      { name: "zero glide half-life", stillMs: 0, halfLife: 0, reducedMotion: false },
+    ])("stops immediately with $name", ({ stillMs, halfLife, reducedMotion }) => {
+      const current = { ...scrollSettings, inertiaHalfLifeMs: halfLife, reducedMotion };
+      const model = createLookModel(start, () => current, () => {}, () => viewport);
+      model.drag(10, 4, 16, { x: 400, y: 300 });
+      const after = model.get();
+      model.release(stillMs);
+      expect(model.moving()).toBe(false);
+      expect(model.step(100)).toBe(false);
+      expect(model.get()).toEqual(after);
+      expect(model.anchor()).toBeNull();
+    });
+
+    it("keeps a two-touch pinch anchored when one-finger scrolling is selected", () => {
+      const model = createLookModel(start, () => scrollSettings, () => {}, () => viewport);
+      const from = { mid: { x: 300, y: 280 }, separation: 80 };
+      const to = { mid: { x: 360, y: 240 }, separation: 140 };
+      const ray = sphereRay(start, viewport, from.mid);
+      model.touchPinch(from, to);
+      expect(errorAt(model.get(), ray, to.mid)).toBeLessThan(0.25);
+      expect(model.anchor()).toMatchObject({ grab: true, zoom: true, held: true });
+    });
+  });
+
   it.each([10, 70, 140, 150])("keeps a dragged image under the finger at %s degrees FOV", verticalFovDeg => {
     for (const from of [{ x: 400, y: 300 }, { x: 590, y: 240 }]) {
       const initial = { ...start, verticalFovDeg };

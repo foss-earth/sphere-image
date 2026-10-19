@@ -244,8 +244,19 @@ const SPHERE_SETTINGS: readonly ParameterSpec[] = [
     home: { tab: SPHERE_SETTINGS_TAB, section: "image", level: "main" }, appliesLive: true, source: LOADER,
   },
   {
+    id: "scene.panorama.dragMode", label: "Drag",
+    description: "Grab holds the touched image point under your finger. Scroll maps horizontal movement to heading and vertical movement to looking up or down, wherever the drag starts. Both keep the same release glide.",
+    unit: "none", kind: "choice",
+    choices: [
+      { id: "grab", label: "Grab", description: "Keep the image point under the finger, with an upright horizon." },
+      { id: "scroll", label: "Scroll", description: "Turn by the finger's movement, independent of where it touches, scaled with zoom." },
+    ],
+    default: "grab", defaultReason: "Keeps the existing point-grab behavior until Scroll is selected.",
+    home: { tab: SPHERE_SETTINGS_TAB, section: "looking", level: "main" }, appliesLive: true, source: "src/look.ts",
+  },
+  {
     id: SHOW_IMAGE_ANCHORS_ID, label: "Show anchors",
-    description: "Shows the image point held by a drag or two-finger touch, and the point a zoom acts about, using the same markers as the map.",
+    description: "Shows the image point held by a Grab drag or two-finger touch, and the point a zoom acts about, using the same markers as the map. Scroll drags have no anchor.",
     unit: "none", kind: "boolean", default: false,
     defaultReason: "Hidden by default, as asked; turn them on to see where gestures hold the image.",
     home: { tab: SPHERE_SETTINGS_TAB, section: "looking", level: "main" }, appliesLive: true, source: "src/globeBrowserBindings.ts",
@@ -264,7 +275,7 @@ const SPHERE_SETTINGS: readonly ParameterSpec[] = [
   },
   quantity({
     id: "scene.panorama.dragSensitivity", label: "Drag to look", unit: "deg/px", min: 0.01, max: 2, fallback: 0.15, scale: "log2", step: 0.05, tab: SPHERE_SETTINGS_TAB, section: "looking",
-    description: "How far the view turns for each CSS pixel you drag when the panorama's viewport cannot be measured. With a measured viewport, dragging keeps the image under your pointer.", reason: "A fallback pointer gain for an unmeasured viewport.", source: INPUT,
+    description: "How far the view turns for each CSS pixel you drag when the panorama's viewport cannot be measured. With a measured viewport, Grab follows the touched image point and Scroll scales movement with the field of view and viewport height.", reason: "A fallback pointer gain for an unmeasured viewport.", source: INPUT,
   }),
   quantity({
     id: "scene.panorama.swipeSensitivity", label: "Swipe to look", unit: "deg/px", min: 0.01, max: 2, fallback: 0.15, scale: "log2", step: 0.05, tab: SPHERE_SETTINGS_TAB, section: "looking",

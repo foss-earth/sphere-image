@@ -25,6 +25,10 @@ export interface ViewerPanelPorts {
   detail(status: ViewerStatus): ImageDetailReading | null;
   externalLinkIcon?():SVGSVGElement;
   openSettings?():void;
+  /** UI's trailing ? (createHelpTooltip), which shows `content` while pressed. */
+  helpTooltip(options:{label:string;content:HTMLElement}):{element:HTMLElement;destroy():void};
+  /** UI's compact action (createIconButton, bound to the document), for 360 image settings. */
+  iconButton(options:{icon:"gear";label:string}):HTMLButtonElement;
 }
 export interface ViewerTabsSnapshot { title:string|null;onScreen:boolean }
 export interface ViewerTabs { sphere:HTMLElement;settings:HTMLElement;getSnapshot():ViewerTabsSnapshot;subscribe(listener:()=>void):()=>void;leave():void;destroy():void }
@@ -43,6 +47,16 @@ export function createViewerTabs(ports:ViewerPanelPorts):ViewerTabs {
   ]);
   const sphere=el("div","foss-earth-sphere-tab");
   sphere.append(photograph,sphereSections.element);
+  // What the panorama offers and how entering goes, behind the detail's ?. It and the settings mark stay across
+  // renders, which come with each step of loading, so an open ? stays open.
+  const offers=note(""), about=el("div");
+  about.append(note("Entering: the preview shows first, then the largest image the detail allows."),offers);
+  if(ports.openSettings)about.append(note("360 image settings hold the representation, sharpness, looking and levelling."));
+  const help=ports.helpTooltip({label:"Explain the detail",content:about});
+  const openSettings=ports.openSettings?ports.iconButton({icon:"gear",label:"360 image settings"}):null;
+  openSettings?.addEventListener("click",()=>{if(!disposed)ports.openSettings?.();});
+  const kept:HTMLElement[]=[...(openSettings?[openSettings]:[]),help.element];
+  detail.append(...kept);
   const settings=ports.sections(["image","looking","entering"].map(id=>({id:`panorama-settings.${id}`,title:ports.sectionTitle(SPHERE_SETTINGS_TAB,id),element:section(SPHERE_SETTINGS_TAB,id),defaultOpen:id==="image"})));
   function render(status:ViewerStatus):void {
     if(disposed)return;
@@ -51,17 +65,18 @@ export function createViewerTabs(ports:ViewerPanelPorts):ViewerTabs {
     if(title!==snapshot.title||onScreen!==snapshot.onScreen){snapshot={title,onScreen};for(const listener of [...listeners])listener();}
     const reading=ports.detail(status), key=JSON.stringify([status.phase,status.active,entry,reading]);
     if(key===rendered)return;rendered=key;
-    photograph.replaceChildren();links.replaceChildren();detail.replaceChildren();if(!entry)return;
+    photograph.replaceChildren();links.replaceChildren();for(const child of [...detail.children])if(!kept.includes(child as HTMLElement))child.remove();
+    for(const item of kept)item.hidden=!entry;if(!entry)return;
     const inside=status.phase==="immersive"&&status.active===entry.id;
     if(entry.description)photograph.append(note(entry.description));
     if(entry.details?.groups?.length)photograph.append(note(`In ${listed(entry.details.groups)}.`));
     if(!entry.actions.length)links.append(note("No links lead from this panorama."));
     for(const action of entry.actions){const go=button(action.label,()=>{if(!disposed)void ports.viewer.activateAction(action.id);});go.disabled=!inside;links.append(go);}
-    if(!reading?.shown||!inside)detail.append(note("Entering: the preview shows first, then the largest image the detail allows."));
-    else{detail.append(note(`Showing ${reading.shown}.`));for(const text of reading.progress??[])detail.append(note(text));detail.append(note(reading.loading?`Loading ${reading.loading}…`:reading.limitation??"It is the largest image this panorama offers."));}
-    detail.append(note(`This panorama offers ${listed(entry.asset.representations.map(ports.representationText))}.`));
-    if(ports.openSettings)detail.append(note("Representation, sharpness, looking and levelling:"),button("360 image settings",()=>{if(!disposed)ports.openSettings?.();}));
+    // "Showing …" and "Loading …" stay in view; "[⚙] [?]" follow them.
+    const lines=!reading?.shown||!inside?[note("Entering…")]:[note(`Showing ${reading.shown}.`),...(reading.progress??[]).map(note),note(reading.loading?`Loading ${reading.loading}…`:reading.limitation??"It is the largest image this panorama offers.")];
+    kept[0].before(...lines);
+    offers.textContent=`This panorama offers ${listed(entry.asset.representations.map(ports.representationText))}.`;
   }
   const off=ports.viewer.subscribe(render);render(ports.viewer.status());
-  return {sphere,settings:settings.element,getSnapshot:()=>snapshot,subscribe(listener){if(!disposed)listeners.add(listener);return()=>{listeners.delete(listener);};},leave(){if(!disposed)ports.viewer.exit();},destroy(){if(disposed)return;disposed=true;off();listeners.clear();for(const handle of handles)handle.destroy();sphereSections.destroy();sphere.remove();settings.destroy();}};
+  return {sphere,settings:settings.element,getSnapshot:()=>snapshot,subscribe(listener){if(!disposed)listeners.add(listener);return()=>{listeners.delete(listener);};},leave(){if(!disposed)ports.viewer.exit();},destroy(){if(disposed)return;disposed=true;off();listeners.clear();help.destroy();for(const handle of handles)handle.destroy();sphereSections.destroy();sphere.remove();settings.destroy();}};
 }
