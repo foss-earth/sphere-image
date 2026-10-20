@@ -37,6 +37,80 @@ describe("injected viewer lifecycle", () => {
     f.viewer.dispose();
     expect(f.holds.active).toBe(0);
   });
+  it("flies in as one motion, growing the orb and widening to the entry field of view, and hands over once the eye is inside", async () => {
+    const f = fixture();
+    f.settings.flightDurationMs = 1000; f.settings.orientDurationMs = 250; f.settings.entryFovDeg = 80;
+    f.options.poses.viewFromPresentation = (_input, presentation) => ({ headingDeg: 0, pitchDeg: 0, rollDeg: 0, verticalFovDeg: (presentation.verticalFovRad * 180) / Math.PI });
+    const input = image("a");
+    input.placement.marker = [6378147, 0, 0];
+    const handle = await f.viewer.prepare(input, new AbortController().signal);
+    await handle.ready();
+    f.viewer.replaceImages([handle]);
+    const place = vi.mocked(f.options.navigation.place);
+    let entered = false;
+    const entering = f.viewer.enter("a").then(ok => { entered = ok; return ok; });
+    await flush();
+    const radii: number[] = [];
+    let elapsed = 0;
+    while (!entered && elapsed < 1000) {
+      await f.advance(16); elapsed += 16;
+      const radius = f.orbs[0].expansion?.radiusMeters;
+      if (radius !== undefined) radii.push(radius);
+    }
+    expect(await entering).toBe(true);
+    expect(elapsed).toBeLessThan(1000);
+    const fovs = place.mock.calls.map(([, presentation]) => (presentation.verticalFovRad * 180) / Math.PI);
+    expect(fovs[0]).toBeGreaterThan(60);
+    expect(fovs[0]).toBeLessThan(61);
+    for (let n = 1; n < fovs.length; n++) expect(fovs[n]).toBeGreaterThan(fovs[n - 1]);
+    for (let n = 1; n < radii.length; n++) expect(radii[n]).toBeGreaterThan(radii[n - 1]);
+    expect(radii[0]).toBeLessThan(1.1);
+    expect(radii.at(-1)).toBeGreaterThan(5);
+    // The image takes over at the flight's last field of view and settles the rest of the way in the flight's time.
+    const handed = f.viewer.status().view!.verticalFovDeg;
+    expect(handed).toBeCloseTo(fovs.at(-1)!, 9);
+    expect(handed).toBeLessThan(80);
+    await f.advance(1000 - elapsed);
+    expect(f.viewer.status().view!.verticalFovDeg).toBeCloseTo(80, 9);
+    f.viewer.dispose();
+    expect(f.holds.active).toBe(0);
+  });
+  it("flies out as one motion, shrinking the orb back to its own size while narrowing to the map's field of view", async () => {
+    const f = fixture();
+    f.settings.entryFovDeg = 80;
+    f.options.poses.presentationFromView = (_input, view) => ({ position: { x: 6378147, y: 0, z: 0 }, forward: { x: 0, y: 1, z: 0 }, up: { x: 1, y: 0, z: 0 }, verticalFovRad: (view.verticalFovDeg * Math.PI) / 180 });
+    const input = image("a");
+    input.placement.marker = [6378147, 0, 0];
+    const handle = await f.viewer.prepare(input, new AbortController().signal);
+    await handle.ready();
+    f.viewer.replaceImages([handle]);
+    expect(await f.viewer.enter("a")).toBe(true);
+    expect(f.viewer.status().view!.verticalFovDeg).toBe(80);
+    f.settings.flightDurationMs = 1000;
+    const place = vi.mocked(f.options.navigation.place);
+    place.mockClear();
+    f.viewer.exit();
+    await flush();
+    const radii: number[] = [];
+    for (let elapsed = 0; elapsed < 1000; elapsed += 16) {
+      const radius = f.orbs[0].expansion?.radiusMeters;
+      if (radius !== undefined) radii.push(radius);
+      await f.advance(16);
+    }
+    await f.advance(16);
+    const fovs = place.mock.calls.map(([, presentation]) => (presentation.verticalFovRad * 180) / Math.PI);
+    expect(fovs[0]).toBeCloseTo(80, 9);
+    for (let n = 1; n < fovs.length; n++) expect(fovs[n]).toBeLessThanOrEqual(fovs[n - 1]);
+    expect(fovs.at(-1)).toBeCloseTo(60, 9);
+    for (let n = 1; n < radii.length; n++) expect(radii[n]).toBeLessThanOrEqual(radii[n - 1]);
+    // The orb starts out grown around the eye, and is back to the size it draws at from the overview.
+    expect(radii[0]).toBeGreaterThan(10);
+    expect(radii.at(-1)).toBeLessThan(1.6);
+    expect(f.orbs[0].expansion).toBeNull();
+    expect(f.options.navigation.restore).toHaveBeenCalledWith(expect.objectContaining({ camera: expect.objectContaining({ radius: 100 }) }), expect.anything());
+    expect(f.viewer.status().phase).toBe("overview");
+    f.viewer.dispose();
+  });
   it("hides a published image on the map without dropping it from the set", async () => {
     const f = fixture();
     const handle = await f.viewer.prepare(image("a"), new AbortController().signal);

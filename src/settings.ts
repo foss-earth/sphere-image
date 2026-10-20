@@ -1,4 +1,5 @@
 import type { DeviceContext, ParameterBounds, ParameterSpec, ParameterUnit } from "@foss-earth/ui/settings";
+import { FLIGHT_GROWTH } from "./flight.js";
 
 export const SCENES_TAB = "scenes";
 /** The tab of the sphere on screen, titled with its image's title. */
@@ -178,6 +179,11 @@ const MOTION: readonly ParameterSpec[] = [
     home: { tab: SCENES_TAB, section: "motion", level: "main" }, appliesLive: true, source: LOADER,
   },
   quantity({
+    id: "scene.panorama.flightGrowth", label: "Orb growth", unit: "ratio", min: 0, max: 1, fallback: FLIGHT_GROWTH, step: 0.05, section: "motion",
+    description: "How much of flying into or out of a 360 image the orb does by growing or shrinking, the camera's flight doing the rest: 0 flies all the way to an orb that keeps its size; 1 grows the orb around a camera that only turns. The orb looks the same on screen either way; more growth keeps the camera farther from the ground, with less of the map to load near it.",
+    reason: "As asked: the orb grows and shrinks while the camera flies, each doing half.", source: LOADER,
+  }),
+  quantity({
     id: "scene.panorama.expandDuration", label: "Entry reveal", unit: "ms", min: 0, max: 2000, fallback: 350, step: 10, section: "motion",
     description: "How long an orb takes to open out to the whole view on entry when the camera does not fly into it.", reason: "A short reveal prototype; motion trial pending.", source: LOADER,
   }),
@@ -342,12 +348,12 @@ const SPHERE_SETTINGS: readonly ParameterSpec[] = [
     id: "scene.panorama.entryFov", label: "Field of view",
     description: "How much of a panorama you see, top to bottom, once you have entered it from the map, within the zoom range. The map's keeps the field of view the map had; the scene's view, when chosen above, brings its own.",
     unit: "deg", kind: "number", named: [{ id: "map", label: "The map's" }], bounds: () => ({ min: 10, max: 150 }), step: 1, scale: "linear",
-    default: 100, defaultReason: "As asked: wide enough to see where you are as soon as you arrive.",
+    default: 120, defaultReason: "As asked: wide enough to see where you are as soon as you arrive; the flight in widens to it on the way.",
     home: { tab: SPHERE_SETTINGS_TAB, section: "entering", level: "main" }, appliesLive: true, source: LOADER,
   },
   quantity({
     id: "scene.panorama.orientDuration", label: "Levelling", unit: "ms", min: 0, max: 2000, fallback: 250, step: 10, tab: SPHERE_SETTINGS_TAB, section: "entering",
-    description: "How long the view takes to level, turn or zoom to its field of view after entering.", reason: "A separate, short levelling phase.", source: LOADER,
+    description: "How long the view takes to level, turn or zoom to its field of view after entering. Flying in arrives level and with its field of view already, so only a turn to the scene's view is left for it.", reason: "A separate, short levelling phase.", source: LOADER,
   }),
 ];
 

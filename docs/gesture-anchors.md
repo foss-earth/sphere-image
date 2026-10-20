@@ -16,7 +16,7 @@ These controls live in **360 image settings → Looking** unless noted otherwise
 | --- | --- |
 | `scene.panorama.dragMode` | **Drag → Grab / Scroll**, default Scroll. Applies to one-finger and mouse drags in the full viewer and scene previews. |
 | `scene.panorama.verticalFovRange` | Default vertical FOV range 20–140°. Allowed setting bounds 10–150°. |
-| `scene.panorama.entryFov` | Default 100°, bounded to 10–150° and the selected zoom range; under Entering. |
+| `scene.panorama.entryFov` | Default 120°, bounded to 10–150° and the selected zoom range; under Entering. The flight in widens or narrows to it on the way. |
 | `scene.panorama.showAnchors` | Show anchors, off by default; independent of the map's `input.showNavigationAnchors`. |
 | `scene.panorama.dragSensitivity` | Legacy degrees-per-pixel fallback when there is no measured viewport. |
 | `scene.panorama.swipeSensitivity` | Degrees per CSS pixel of a two-finger trackpad swipe at 90° FOV, scaled with $\tan(\text{fov}/2)$. |

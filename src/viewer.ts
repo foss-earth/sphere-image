@@ -7,7 +7,7 @@ import { dot, length, scale, sub, type Vec3 } from "@foss-earth/images";
 import type { ImageRepresentation } from "@foss-earth/images";
 import { clampLook, createLookModel, type LookModel, type LookSettings, type LookState } from "./look.js";
 import type { SphereViewport } from "./sphereCamera.js";
-import { flightIn, flightOut, flightMotion, poseView, type Flight, type FlightPose } from "./flight.js";
+import { FLIGHT_GROWTH, flightIn, flightOut, flightMotion, flightProgress, flightProgressRate, poseView, type Flight, type FlightPose } from "./flight.js";
 import { expansionTargetRadius, handoffReady, orbGeometry } from "./math.js";
 import { interpolateView } from "./views.js";
 import type { SettledPublishedImageViewer, PreparedViewerImage, ViewerAbortSignal, ViewerImageInput, ViewerLook, ViewerNavigationPresentation, ViewerNavigationSnapshot, ViewerPosePorts, ViewerStatus, ViewerWorldMath } from "./ports.js";
@@ -73,6 +73,8 @@ export interface ViewerSettings {
   /** The vertical FOV, deg, a sphere entered from the map opens at, within the look's range; null or absent keeps the camera's. */
   entryFovDeg?: number | null;
   flightDurationMs: number;
+  /** How much of a flight into or out of an orb the orb's growing or shrinking makes, 0 to 1 (`FLIGHT_GROWTH`, when absent). */
+  flightGrowth?: number;
   expandDurationMs: number;
   fadeDurationMs: number;
   reducedFadeDurationMs: number;
@@ -281,7 +283,8 @@ export function createImageViewer(options: ImageViewerOptions): SettledPublished
     for (const entry of entries.values()) if (live(entry)) entry.orb.update({ opacity: id !== null && entry.input.id === id ? value : 1 });
     renderer.immersion.setOpacity(id === null ? 1 : value);
   }
-  function animate(ms: number, step: (t: number) => void, signal: AbortSignal, lease: ViewerNavigationLease | null): Promise<void> {
+  /** Steps `t` from 0 to 1 over `ms`, a frame at a time; a step that returns true ends it there. */
+  function animate(ms: number, step: (t: number) => boolean | void, signal: AbortSignal, lease: ViewerNavigationLease | null): Promise<void> {
     if (signal.aborted) return Promise.reject(signal.reason);
     if (!(ms > 0)) { step(1); return Promise.resolve(); }
     const release = lease ? lease.holdRendering() : options.holdRendering();
@@ -292,7 +295,7 @@ export function createImageViewer(options: ImageViewerOptions): SettledPublished
       const abort = (): void => { try { finish(); reject(signal.reason); } catch (error) { reject(new AggregateError([signal.reason, error], "Viewer animation cancellation failed.")); } };
       const tick = (): void => {
         if (signal.aborted) { abort(); return; }
-        try { const t = Math.min(1, Math.max(0, (options.now() - started) / ms)); step(t); if (t >= 1) { finish(); resolve(); } }
+        try { const t = Math.min(1, Math.max(0, (options.now() - started) / ms)); if (step(t) === true || t >= 1) { finish(); resolve(); } }
         catch (error) { finish(); reject(error); }
       };
       signal.addEventListener("abort", abort, { once: true }); frames.add(tick); options.requestRender();
@@ -359,16 +362,19 @@ export function createImageViewer(options: ImageViewerOptions): SettledPublished
     void loadPreview(entry, 10, Number.POSITIVE_INFINITY).catch(() => {});
     return entry.preview!;
   }
+  function authoredView(entry: Entry, explicit?: LookState): LookState | undefined {
+    return explicit ?? (options.settings().entryOrientation === "authored" ? entry.input.initialView : undefined);
+  }
   function arrivalFor(entry: Entry, incoming: ViewerLook, explicit?: LookState): ViewerLook {
     const range = options.settings().look.fovRangeDeg;
-    const authored = explicit ?? (options.settings().entryOrientation === "authored" ? entry.input.initialView : undefined);
+    const authored = authoredView(entry, explicit);
     const fov = authored?.verticalFovDeg ?? options.settings().entryFovDeg ?? incoming.verticalFovDeg;
     return { ...(authored ?? incoming), rollDeg: 0, verticalFovDeg: Math.min(range.max, Math.max(range.min, fov)) };
   }
   function handBack(lease: ViewerNavigationLease, flying: Flying, moving: boolean, press: ViewerHeldPress | null, touches: readonly ViewerHeldTouch[] | null = null): void {
-    const { flight, marker, t } = flying; const s = smooth(t); const current = flight.pose(s);
-    let { velocity, turn } = moving ? flightMotion(flight, s, (6 * t * (1 - t) * 1000) / flying.durationMs) : { velocity: [0, 0, 0] as Vec3, turn: [0, 0, 0] as Vec3 };
-    const toMarker = sub(marker, current.position); const gap = length(toMarker) - flight.radiusMeters;
+    const { flight, marker, t } = flying; const s = flightProgress(t); const current = flight.pose(s);
+    let { velocity, turn } = moving ? flightMotion(flight, s, (flightProgressRate(t) * 1000) / flying.durationMs) : { velocity: [0, 0, 0] as Vec3, turn: [0, 0, 0] as Vec3 };
+    const toMarker = sub(marker, current.position); const gap = length(toMarker) - flight.radius(s);
     const inward = dot(velocity, toMarker) / Math.max(1e-9, length(toMarker)); const keep = navigation.inertiaDecay();
     const travel = keep < 1 ? (inward / 60) / (1 - keep) : Number.POSITIVE_INFINITY;
     if (travel > 0 && travel > Math.max(0, gap)) { const share = Math.max(0, gap) / travel; velocity = scale(velocity, share); turn = scale(turn, share); }
@@ -377,12 +383,12 @@ export function createImageViewer(options: ImageViewerOptions): SettledPublished
   function stopFade(): void { fading?.stop(); fading = null; }
   function fadeOrb(entry: Entry, flying: Flying, done: () => void): void {
     stopFade(); const curve = options.world.glideSettling(navigation.inertiaDecay()); const controller = options.createAbortController();
-    const revealed = flying.reveal(smooth(flying.t)); let finished = false;
+    const s = flightProgress(flying.t); const revealed = flying.reveal(s); const from = flying.flight.radius(s); let finished = false;
     const finish = (): void => { if (finished) return; finished = true; if (fading === current) fading = null; if (live(entry)) { entry.orb.setExpansion(null); unfreeze(entry); } done(); };
     const current = { stop() { controller.abort(); finish(); } }; fading = current; freeze(entry);
     void animate(curve.durationMs, u => {
-      if (!live(entry)) return; const settled = curve.settled(u * curve.durationMs); const own = entry.orb.effectiveRadius() ?? flying.flight.radiusMeters;
-      entry.orb.setExpansion({ radiusMeters: flying.flight.radiusMeters + (own - flying.flight.radiusMeters) * settled, reveal: revealed * (1 - settled), ...(flying.source ? { source: flying.source } : {}) });
+      if (!live(entry)) return; const settled = curve.settled(u * curve.durationMs); const own = entry.orb.effectiveRadius() ?? from;
+      entry.orb.setExpansion({ radiusMeters: from + (own - from) * settled, reveal: revealed * (1 - settled), ...(flying.source ? { source: flying.source } : {}) });
     }, controller.signal, null).then(finish, finish);
   }
   function resetHover(): void {
@@ -425,10 +431,12 @@ export function createImageViewer(options: ImageViewerOptions): SettledPublished
       offAbort: () => lease.signal.removeEventListener("abort", abort), refine: null, refineWork: null, refinePhase: null, failed: new Set(), leaving: false, limitation: null, loading: null };
     return state;
   }
-  async function arrive(state: Immersion, to: ViewerLook): Promise<void> {
+  /** Turns, levels and zooms the view to `to`: by default over the levelling time; `pace` continues a flight's own. */
+  async function arrive(state: Immersion, to: ViewerLook, pace?: { durationMs: number; ease(t: number): number }): Promise<void> {
     const from = geoView(state.look.get(), state.roll); arrival?.abort(); const controller = options.createAbortController(); arrival = controller;
-    try { await animate(options.settings().look.reducedMotion ? 0 : options.settings().orientDurationMs, t => {
-      if (immersion !== state) return; const view = interpolateView(from, to, smooth(t)); state.roll = view.rollDeg; state.look.set(view);
+    const ease = pace?.ease ?? smooth;
+    try { await animate(options.settings().look.reducedMotion ? 0 : pace?.durationMs ?? options.settings().orientDurationMs, t => {
+      if (immersion !== state) return; const view = interpolateView(from, to, ease(t)); state.roll = view.rollDeg; state.look.set(view);
     }, controller.signal, state.lease); }
     catch { if (immersion === state && !state.leaving && state.roll !== 0) { state.roll = 0; state.look.set(state.look.get()); } }
     finally { if (arrival === controller) arrival = null; }
@@ -571,20 +579,31 @@ export function createImageViewer(options: ImageViewerOptions): SettledPublished
       if (lease.released || lease.signal.aborted) throw new Error("The navigation lease ended before entry."); transition = { lease, flying: null }; lease.signal.addEventListener("abort", endWithLease, { once: true });
       phase = "entering"; freeze(entry); emit();
       const frame = renderer.cameraFrame(); if (!frame) throw new Error("The host camera is not ready.");
-      let incoming = options.poses.viewFromPresentation(entry.input, presented({ position: frame.eye, forward: frame.view.forward, up: frame.view.up, verticalFovRad: frame.view.verticalFovRad }));
-      const marker = entry.input.placement.marker; const ms = marker ? duration() : 0;
-      const flight = marker && ms > 0 ? flightIn(options.world, { position: frame.eye, forward: frame.view.forward, up: frame.view.up, verticalFovRad: frame.view.verticalFovRad }, marker, entry.orb.effectiveRadius(frame) ?? entry.input.placement.radiusMeters) : null;
+      const start: FlightPose = { position: frame.eye, forward: frame.view.forward, up: frame.view.up, verticalFovRad: frame.view.verticalFovRad };
+      let incoming = options.poses.viewFromPresentation(entry.input, presented(start));
+      const marker = entry.input.placement.marker; const ms = marker ? duration() : 0; const radius = entry.orb.effectiveRadius(frame) ?? entry.input.placement.radiusMeters;
+      // The flight widens or narrows to the field of view it arrives with, so entering is one motion with nothing left to zoom.
+      const straight = marker && ms > 0 ? flightIn(options.world, start, marker, radius) : null;
+      const landing = straight ? arrivalFor(entry, options.poses.viewFromPresentation(entry.input, presented(straight.pose(1))), enterOptions.view) : null;
+      const flight = marker && landing ? flightIn(options.world, start, marker, radius, { verticalFovRad: landing.verticalFovDeg * Math.PI / 180, growth: options.settings().flightGrowth ?? FLIGHT_GROWTH }) : null;
+      let settle: { durationMs: number; ease(t: number): number } | undefined;
       const expansion = !flight && marker && !options.settings().look.reducedMotion ? (() => {
         const rel = sub(marker, frame.eye); const distance = length(rel); const start = entry.orb.effectiveRadius(frame) ?? entry.input.placement.radiusMeters;
         if (distance <= start) return null; const end = expansionTargetRadius(distance, scale(rel, 1 / distance), frame.view, beta());
         return end === null ? null : { rel, start, end };
       })() : null;
-      if (flight && marker) {
-        warmTiles(entry, arrivalFor(entry, options.poses.viewFromPresentation(entry.input, presented(flight.pose(1))), enterOptions.view));
-        flying = { flight, marker, durationMs: ms, startedMs: options.now(), t: 0, reveal: s => s }; transition.flying = flying;
-        await animate(ms, t => { flying!.t = t; const eased = smooth(t); navigation.place(lease!, presented(flight.pose(eased)), marker); entry.orb.setExpansion({ radiusMeters: flight.radiusMeters, reveal: eased }); }, signal, lease);
-        flying = null; transition.flying = null;
-        const end = flight.pose(1); if (!handoffReady(orbGeometry(sub(marker, end.position), flight.radiusMeters), poseView(end, frame.view.aspect), beta())) throw new Error("The flight did not end inside the orb.");
+      if (flight && marker && landing) {
+        warmTiles(entry, landing);
+        flying = { flight, marker, durationMs: ms, startedMs: options.now(), t: 0, reveal: s => Math.min(1, s / flight.surface) }; transition.flying = flying;
+        // Inside the orb only the image shows, so the panorama takes over as soon as the eye is in and settles the rest of the way itself.
+        await animate(ms, t => {
+          flying!.t = t; const s = flightProgress(t); const at = flight.pose(s); const radius = flight.radius(s);
+          navigation.place(lease!, presented(at), marker); entry.orb.setExpansion({ radiusMeters: radius, reveal: flying!.reveal(s) });
+          return length(sub(marker, at.position)) < radius;
+        }, signal, lease);
+        const handed = flying.t; const s = flightProgress(handed); flying = null; transition.flying = null;
+        const end = flight.pose(s); if (!handoffReady(orbGeometry(sub(marker, end.position), flight.radius(s)), poseView(end, frame.view.aspect), beta())) throw new Error("The flight did not end inside the orb.");
+        if (handed < 1 && !authoredView(entry, enterOptions.view)) settle = { durationMs: (1 - handed) * ms, ease: u => (flightProgress(handed + u * (1 - handed)) - s) / (1 - s) };
         incoming = options.poses.viewFromPresentation(entry.input, presented(end));
         renderer.immersion.show({ source: sourceOf(entry, entry.preview ?? first) }); lease.setPresentationView(pose(entry, incoming)); entry.orb.setExpansion(null);
       } else if (expansion) {
@@ -600,7 +619,7 @@ export function createImageViewer(options: ImageViewerOptions): SettledPublished
       }
       signal.throwIfAborted(); if (!previewCurrent(entry)) throw new Error("The image preview generation ended during entry."); input.stop();
       const state = startImmersion(entry, entry.preview ?? first, lease, incoming); immersion = state; transition = null;
-      phase = "immersive"; target = null; resetHover(); emit(); refine(state); void arrive(state, arrivalFor(entry, incoming, enterOptions.view)); return true;
+      phase = "immersive"; target = null; resetHover(); emit(); refine(state); void arrive(state, flight && landing ? landing : arrivalFor(entry, incoming, enterOptions.view), settle); return true;
     } catch (error) {
       const replaced = operation !== op.controller || !entry.visible;
       if (lease && !lease.released && !immersion) {
@@ -623,16 +642,16 @@ export function createImageViewer(options: ImageViewerOptions): SettledPublished
     const overview = state.lease.overview.camera;
     const ownRadius = frame ? Math.max(options.settings().appearance.markerDiameterCssPx.min * overview.radius * Math.tan(overview.fov / 2) / frame.viewportHeightCssPx,
       Math.min(options.settings().appearance.markerDiameterCssPx.max * overview.radius * Math.tan(overview.fov / 2) / frame.viewportHeightCssPx, entry.input.placement.radiusMeters)) : entry.input.placement.radiusMeters;
-    const candidate = marker && frame && ms > 0 ? flightOut(options.world, { forward: [view.forward.x, view.forward.y, view.forward.z], up: [view.up.x, view.up.y, view.up.z], verticalFovRad: view.verticalFovRad }, marker, ownRadius, overview) : null;
-    const flight = candidate && marker && frame && handoffReady(orbGeometry(sub(marker, candidate.pose(0).position), ownRadius), poseView(candidate.pose(0), frame.view.aspect), beta()) ? candidate : null;
-    const flying: Flying | null = flight && marker ? { flight, marker, durationMs: ms, startedMs: options.now(), t: 0, reveal: s => 1 - s, source } : null;
+    const candidate = marker && frame && ms > 0 ? flightOut(options.world, { forward: [view.forward.x, view.forward.y, view.forward.z], up: [view.up.x, view.up.y, view.up.z], verticalFovRad: view.verticalFovRad }, marker, ownRadius, overview, { growth: options.settings().flightGrowth ?? FLIGHT_GROWTH }) : null;
+    const flight = candidate && marker && frame && handoffReady(orbGeometry(sub(marker, candidate.pose(0).position), candidate.radius(0)), poseView(candidate.pose(0), frame.view.aspect), beta()) ? candidate : null;
+    const flying: Flying | null = flight && marker ? { flight, marker, durationMs: ms, startedMs: options.now(), t: 0, reveal: s => Math.min(1, (1 - s) / (1 - flight.surface)), source } : null;
     const input = options.input.cancelOnInput(op.controller); let cut = false;
     const abort = (): void => op.controller.abort(new Error("Navigation ended.")); state.lease.signal.addEventListener("abort", abort, { once: true });
     transition = { lease: state.lease, flying };
     try {
       if (flight && flying && marker) {
-        navigation.place(state.lease, presented(flight.pose(0)), marker); entry.orb.setExpansion({ radiusMeters: flight.radiusMeters, reveal: 1, source }); state.lease.setPresentationView(null); renderer.immersion.show(null);
-        await animate(ms, t => { flying.t = t; const eased = smooth(t); navigation.place(state.lease, presented(flight.pose(eased)), marker); entry.orb.setExpansion({ radiusMeters: flight.radiusMeters, reveal: 1 - eased, source }); }, op.controller.signal, state.lease);
+        navigation.place(state.lease, presented(flight.pose(0)), marker); entry.orb.setExpansion({ radiusMeters: flight.radius(0), reveal: 1, source }); state.lease.setPresentationView(null); renderer.immersion.show(null);
+        await animate(ms, t => { flying.t = t; const s = flightProgress(t); navigation.place(state.lease, presented(flight.pose(s)), marker); entry.orb.setExpansion({ radiusMeters: flight.radius(s), reveal: flying.reveal(s), source }); }, op.controller.signal, state.lease);
       } else {
         navigation.restore(state.lease.overview, state.lease); state.lease.setPresentationView(null);
         await animate(fadeDuration(), t => renderer.immersion.show({ source, opacity: 1 - smooth(t), view }), op.controller.signal, state.lease);
