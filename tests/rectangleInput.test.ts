@@ -191,7 +191,7 @@ describe("routed image input", () => {
     // One finger on the picture still drags it.
     const x = camera().x;
     surface.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 3, pointerType: "mouse", clientX: 10, clientY: 10, bubbles: true, cancelable: true, button: 0 }));
-    surface.dispatchEvent(new PointerEvent("pointermove", { pointerId: 3, pointerType: "mouse", clientX: 18, clientY: 14, bubbles: true, cancelable: true }));
+    surface.dispatchEvent(new PointerEvent("pointermove", { pointerId: 3, pointerType: "mouse", buttons: 1, clientX: 18, clientY: 14, bubbles: true, cancelable: true }));
     expect(camera().x).toBeCloseTo(x + 8, 6);
     binding.detach();
   });
