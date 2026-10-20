@@ -67,6 +67,128 @@ describe("sphere look input", () => {
   });
 });
 
+describe("sphere mouse input", () => {
+  const pointer = (type: string, button: number, x: number, y: number, time: number, init: PointerEventInit = {}) => {
+    const event = new PointerEvent(type, {
+      pointerId: 1, pointerType: "mouse", button: type === "pointermove" ? -1 : button,
+      buttons: type === "pointerup" ? 0 : button === 2 ? 2 : 1,
+      clientX: x, clientY: y, bubbles: true, cancelable: true, ...init,
+    });
+    Object.defineProperty(event, "timeStamp", { value: time });
+    return event;
+  };
+
+  it.each(["auto", "mouse", "trackpad"] as const)("pans and glides equally with left and right drags in %s mode", mode => {
+    const drag = (button: number) => {
+      const canvas = document.createElement("canvas");
+      canvas.setPointerCapture = vi.fn();
+      // Babylon suppresses browser defaults before the image binding runs.
+      canvas.addEventListener("pointerdown", event => event.preventDefault());
+      const initial = { headingDeg: 90, pitchDeg: 8, verticalFovDeg: 60 };
+      const model = createLookModel(initial, () => SETTINGS, () => {}, () => ({ width: 800, height: 600 }));
+      const input = attachLookInput({
+        canvas, model, window, controlTakesKey, createWheelGestureClassifier,
+        onExit: vi.fn(), onUserInput: vi.fn(), requestFrame: vi.fn(), inputMode: () => mode,
+      });
+      canvas.dispatchEvent(pointer("pointerdown", button, 100, 100, 100));
+      canvas.dispatchEvent(pointer("pointermove", button, 130, 120, 116));
+      const held = model.get();
+      expect(held.headingDeg).toBeLessThan(initial.headingDeg);
+      expect(held.pitchDeg).toBeGreaterThan(initial.pitchDeg);
+      expect(canvas.setPointerCapture).toHaveBeenCalledExactlyOnceWith(1);
+      canvas.dispatchEvent(pointer("pointerup", button, 130, 120, 120));
+      canvas.dispatchEvent(pointer("lostpointercapture", button, 130, 120, 121, { buttons: 0 }));
+      expect(model.moving()).toBe(true);
+      settle(model);
+      const released = model.get();
+      expect(released.headingDeg).toBeLessThan(held.headingDeg);
+      input.detach();
+      return { held, released };
+    };
+    expect(drag(2)).toEqual(drag(0));
+  });
+
+  it.each([0, 2])("ends button %s's drag when capture is lost outside the browser", button => {
+    const canvas = document.createElement("canvas");
+    canvas.setPointerCapture = vi.fn();
+    canvas.releasePointerCapture = vi.fn();
+    const model = createLookModel({ headingDeg: 90, pitchDeg: 8, verticalFovDeg: 60 }, () => SETTINGS, () => {});
+    const release = vi.spyOn(model, "release");
+    const input = attachLookInput({ canvas, model, window, controlTakesKey, createWheelGestureClassifier, onExit: vi.fn(), onUserInput: vi.fn(), requestFrame: vi.fn() });
+    canvas.dispatchEvent(pointer("pointerdown", button, 100, 100, 100));
+    canvas.dispatchEvent(pointer("pointermove", button, 130, 120, 116));
+    // Leaving while held still allows a captured drag; a different pointer's capture is unrelated.
+    canvas.dispatchEvent(pointer("pointerleave", button, 130, 120, 117));
+    canvas.dispatchEvent(pointer("lostpointercapture", button, 130, 120, 118, { pointerId: 2 }));
+    expect(release).not.toHaveBeenCalled();
+    const before = model.get();
+    canvas.dispatchEvent(pointer("pointermove", button, 140, 120, 132));
+    expect(model.get()).not.toEqual(before);
+    canvas.dispatchEvent(pointer("lostpointercapture", button, 140, 120, 136, { buttons: 0 }));
+    expect(release).toHaveBeenCalledExactlyOnceWith(4);
+    expect(model.moving()).toBe(true);
+    settle(model);
+    const released = model.get();
+    canvas.dispatchEvent(pointer("pointermove", button, 500, 300, 500, { buttons: 0 }));
+    canvas.dispatchEvent(pointer("pointerup", button, 500, 300, 501));
+    expect(model.get()).toEqual(released);
+    expect(release).toHaveBeenCalledOnce();
+    input.detach();
+  });
+
+  it.each([0, 2])("recovers button %s's missed release before applying a returning pointer's movement", button => {
+    for (const buttons of [0, button === 2 ? 1 : 2]) {
+      const canvas = document.createElement("canvas");
+      canvas.setPointerCapture = vi.fn();
+      canvas.releasePointerCapture = vi.fn();
+      const model = createLookModel({ headingDeg: 90, pitchDeg: 8, verticalFovDeg: 60 }, () => SETTINGS, () => {});
+      const release = vi.spyOn(model, "release");
+      const input = attachLookInput({ canvas, model, window, controlTakesKey, createWheelGestureClassifier, onExit: vi.fn(), onUserInput: vi.fn(), requestFrame: vi.fn() });
+      canvas.dispatchEvent(pointer("pointerdown", button, 100, 100, 100));
+      canvas.dispatchEvent(pointer("pointermove", button, 130, 120, 116));
+      const before = model.get();
+      // Neither pointerup nor lostpointercapture reached the page. The return may have another button held.
+      canvas.dispatchEvent(pointer("pointermove", button, 500, 300, 300, { buttons }));
+      expect(model.get()).toEqual(before);
+      expect(model.moving()).toBe(false);
+      expect(release).toHaveBeenCalledExactlyOnceWith(184);
+      expect(canvas.releasePointerCapture).toHaveBeenCalledExactlyOnceWith(1);
+      canvas.dispatchEvent(pointer("pointermove", button, 510, 310, 316, { buttons }));
+      expect(model.get()).toEqual(before);
+      canvas.dispatchEvent(pointer("pointerdown", button, 510, 310, 400));
+      canvas.dispatchEvent(pointer("pointermove", button, 520, 310, 416));
+      expect(model.get()).not.toEqual(before);
+      input.detach();
+    }
+  });
+
+  it("leaves a claimed right press to its handler and suppresses the browser menu only while attached", () => {
+    const canvas = document.createElement("canvas");
+    canvas.setPointerCapture = vi.fn();
+    canvas.addEventListener("pointerdown", event => event.stopImmediatePropagation(), { capture: true });
+    const initial = { headingDeg: 90, pitchDeg: 8, verticalFovDeg: 60 };
+    const model = createLookModel(initial, () => SETTINGS, () => {});
+    const onUserInput = vi.fn();
+    const input = attachLookInput({ canvas, model, window, controlTakesKey, createWheelGestureClassifier, onExit: vi.fn(), onUserInput, requestFrame: vi.fn() });
+    canvas.dispatchEvent(pointer("pointerdown", 2, 100, 100, 100));
+    canvas.dispatchEvent(pointer("pointermove", 2, 130, 120, 116));
+    canvas.dispatchEvent(pointer("pointerup", 2, 130, 120, 120));
+    expect(model.get()).toEqual(initial);
+    expect(canvas.setPointerCapture).not.toHaveBeenCalled();
+    expect(onUserInput).not.toHaveBeenCalled();
+    const menu = new MouseEvent("contextmenu", { cancelable: true });
+    const customMenu = vi.fn();
+    canvas.addEventListener("contextmenu", customMenu);
+    canvas.dispatchEvent(menu);
+    expect(menu.defaultPrevented).toBe(true);
+    expect(customMenu).toHaveBeenCalledOnce();
+    input.detach();
+    const detachedMenu = new MouseEvent("contextmenu", { cancelable: true });
+    canvas.dispatchEvent(detachedMenu);
+    expect(detachedMenu.defaultPrevented).toBe(false);
+  });
+});
+
 describe("sphere wheel input", () => {
   const wheel = (init: WheelEventInit) => new WheelEvent("wheel", { bubbles: true, cancelable: true, ...init });
   const attach = (mode: "trackpad" | "mouse") => {

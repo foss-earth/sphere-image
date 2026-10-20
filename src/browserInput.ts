@@ -169,7 +169,7 @@ export interface LookInputBinding {
 /** Binds image camera input; returns the controller-intent handler, cancellation and a detach function. */
 export function attachLookInput(options: LookInputOptions): LookInputBinding {
   const { canvas, model, window } = options;
-  const pointers = new Map<number, { x: number; y: number; at: number }>();
+  const pointers = new Map<number, { x: number; y: number; at: number; mouseButtonMask: number }>();
   /** Touches that landed off the surface. They join a pinch once a second finger is down. */
   const outside = new Map<number, { x: number; y: number; at: number }>();
   let pinchFrom: TouchPair | null = null;
@@ -294,11 +294,12 @@ export function attachLookInput(options: LookInputOptions): LookInputBinding {
   const overSurface = (target: EventTarget | null): boolean => Boolean(nodeOf && target instanceof nodeOf && canvas.contains(target));
 
   const onPointerDown = (event: PointerEvent): void => {
-    if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (event.pointerType === "mouse" && event.button !== 0 && event.button !== 2) return;
     beginContactMarkers();
     model.cancelInertia();
     options.onUserInput();
-    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, at: event.timeStamp });
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, at: event.timeStamp,
+      mouseButtonMask: event.pointerType === "mouse" ? event.button === 2 ? 2 : 1 : 0 });
     try { canvas.setPointerCapture(event.pointerId); } catch { /* the pointer may already be gone */ }
     hover = { x: event.clientX, y: event.clientY };
     if (pointers.size + outside.size >= 2) rebaseline();
@@ -309,7 +310,9 @@ export function attachLookInput(options: LookInputOptions): LookInputBinding {
     hover = { x: event.clientX, y: event.clientY };
     const last = pointers.get(event.pointerId);
     if (!last) return;
-    const current = { x: event.clientX, y: event.clientY, at: event.timeStamp };
+    // A release outside the browser may never arrive. Check before a returning pointer can drag.
+    if (last.mouseButtonMask && (event.buttons & last.mouseButtonMask) === 0) { onPointerUp(event); return; }
+    const current = { x: event.clientX, y: event.clientY, at: event.timeStamp, mouseButtonMask: last.mouseButtonMask };
     pointers.set(event.pointerId, current);
     if (pointers.size + outside.size >= 2) applyPinch(current.at - last.at);
     else {
@@ -323,6 +326,7 @@ export function attachLookInput(options: LookInputOptions): LookInputBinding {
   const onPointerUp = (event: PointerEvent): void => {
     const last = pointers.get(event.pointerId);
     if (!last || !pointers.delete(event.pointerId)) return;
+    try { canvas.releasePointerCapture(event.pointerId); } catch { /* capture may already be lost */ }
     finishContacts(event.timeStamp, last.at, true);
   };
   const onPointerCancel = (event: PointerEvent): void => {
@@ -439,8 +443,9 @@ export function attachLookInput(options: LookInputOptions): LookInputBinding {
   const onBlur = (): void => {
     hideMarkers();
     keys.clear();
-    for (const id of pointers.keys()) { try { canvas.releasePointerCapture(id); } catch { /* released */ } }
+    const heldPointers = [...pointers.keys()];
     pointers.clear(); outside.clear(); pinchFrom = null; pinching = false;
+    for (const id of heldPointers) { try { canvas.releasePointerCapture(id); } catch { /* released */ } }
     padRates.lookX = padRates.lookY = padRates.zoom = 0;
     gestureScale = 1;
     model.cancelInertia(); syncRates();
@@ -448,12 +453,15 @@ export function attachLookInput(options: LookInputOptions): LookInputBinding {
   const onPointerLeave = (event: PointerEvent): void => {
     if (!pointers.has(event.pointerId)) hover = null;
   };
+  const onContextMenu = (event: Event): void => { event.preventDefault(); };
 
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointermove", onPointerMove);
   canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("lostpointercapture", onPointerUp);
   canvas.addEventListener("pointercancel", onPointerCancel);
   canvas.addEventListener("pointerleave", onPointerLeave);
+  canvas.addEventListener("contextmenu", onContextMenu);
   const foreign = options.claimForeignTouch === true;
   if (foreign) {
     window.addEventListener("pointerdown", onForeignDown, { capture: true });
@@ -502,8 +510,10 @@ export function attachLookInput(options: LookInputOptions): LookInputBinding {
       canvas.removeEventListener("pointerdown", onPointerDown);
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
+      canvas.removeEventListener("lostpointercapture", onPointerUp);
       canvas.removeEventListener("pointercancel", onPointerCancel);
       canvas.removeEventListener("pointerleave", onPointerLeave);
+      canvas.removeEventListener("contextmenu", onContextMenu);
       if (foreign) {
         window.removeEventListener("pointerdown", onForeignDown, { capture: true });
         window.removeEventListener("pointermove", onForeignMove, { capture: true });
