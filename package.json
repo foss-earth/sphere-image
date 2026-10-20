@@ -77,7 +77,20 @@
       "source": "./src/globeBrowserBindings.ts",
       "types": "./dist/globeBrowserBindings.d.ts",
       "import": "./dist/globeBrowserBindings.js"
-    }
+    },
+    "./projections-TS": {
+      "types": "./projections-TS/index.d.ts",
+      "source": "./projections-TS/index.js",
+      "import": "./projections-TS/index.js",
+      "default": "./projections-TS/index.js"
+    },
+    "./projections-WASM": {
+      "types": "./projections-WASM/index.d.ts",
+      "source": "./projections-WASM/index.js",
+      "import": "./projections-WASM/index.js",
+      "default": "./projections-WASM/index.js"
+    },
+    "./projections-WASM/wasm": "./projections-WASM/single/projections.wasm"
   },
   "files": [
     "dist",
@@ -86,6 +99,8 @@
     "README.md",
     "NOTICE",
     "node",
+    "projections-TS",
+    "projections-WASM",
     "docs",
     "fixtures/native-bindings",
     "AGENTS.md"
@@ -121,6 +136,10 @@
     "ci": "npm run check:implementation",
     "typecheck:consumer": "tsc -p fixtures/tsconfig.json",
     "test:consumer": "node scripts/check-public-consumer.mjs",
+    "build:wasm": "node projections-WASM/scripts/build.mjs",
+    "check:wasm": "node projections-WASM/scripts/check.mjs",
+    "check:parity": "node projections-WASM/scripts/check-projections.mjs --large",
+    "test:wasm": "node --test projections-WASM/tests/*.test.mjs",
     "check:implementation": "npm run typecheck && npm run lint && npm run build && npm test && npm run typecheck:consumer"
   },
   "peerDependencies": {

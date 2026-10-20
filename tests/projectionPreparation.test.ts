@@ -4,7 +4,7 @@ import path from "node:path";
 import { prepareSphere, prepareSphereAsync } from "../node/preparation.mjs";
 
 describe("preparation projection worker", () => {
-  it("preserves complete JS output and explicitly reports unavailable native fallback", async () => {
+  it("matches the JS output with projections-WASM and explicitly reports an unavailable native fallback", async () => {
     const parent = path.resolve("build/checks/projection-worker");
     mkdirSync(parent, { recursive: true });
     const owner = mkdtempSync(path.join(parent, "case-"));
@@ -13,13 +13,15 @@ describe("preparation projection worker", () => {
     const argv = ["--input", "synthetic:cardinal:64", "--pose", pose, "--attribution", "fixture", "--preview-face-sizes", "8,16", "--tiles", "eac,cube", "--tile-size", "8", "--tile-face-size", "16", "--encoding", "png"];
     const original = prepareSphere([...argv, "--out", path.join(owner, "original")], { log() {} });
     const worker = await prepareSphereAsync([...argv, "--native-tier", "typescript-worker", "--out", path.join(owner, "worker")], { log() {} });
-    const fallback = await prepareSphereAsync([...argv, "--native-tier", "single", "--out", path.join(owner, "fallback")], { log() {} });
-    for (const result of [worker, fallback]) {
+    const single = await prepareSphereAsync([...argv, "--native-tier", "single", "--out", path.join(owner, "single")], { log() {} });
+    const fallback = await prepareSphereAsync([...argv, "--native-tier", "single", "--projection-module", path.join(owner, "missing", "index.js"), "--out", path.join(owner, "fallback")], { log() {} });
+    for (const result of [worker, single, fallback]) {
       expect(result.fragment).toEqual(original.fragment);
       expect(result.provenance?.outputs).toEqual(original.provenance?.outputs);
       expect(result.provenance?.tiles).toEqual(original.provenance?.tiles);
     }
     expect(worker.provenance?.nativeCores).toMatchObject([{ actual: "typescript", placement: "worker", jobs: 72 }]);
-    expect(fallback.provenance?.nativeCores).toMatchObject([{ requested: "single", actual: "typescript", state: "fallback", fallbackReason: expect.stringContaining("--projection-module") }]);
+    expect(single.provenance?.nativeCores).toMatchObject([{ requested: "single", actual: "wasm-single", parity: "same", jobs: 72 }]);
+    expect(fallback.provenance?.nativeCores).toMatchObject([{ requested: "single", actual: "typescript", state: "fallback", fallbackReason: expect.stringContaining("no such file") }]);
   });
 });

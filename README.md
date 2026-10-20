@@ -29,6 +29,8 @@ Other repositories own related pieces:
 | `./globe`, `./globe-browser` | Globe bindings |
 | `./preparation` (also `./node`) | `prepareSphere(argv, ports)` |
 | `./prepare-cli` | The `foss-earth-prepare-panorama` command |
+| `./projections-TS` | The sphere libraries' reprojection kernels that projections-WASM reproduces, re-exported |
+| `./projections-WASM` | Their Rust/WebAssembly twin, for workers. `./projections-WASM/wasm` is the binary. See [projections-WASM](projections-WASM/README.md). |
 
 Engine geography is supplied through `ViewerWorldMath` and `ViewerPosePorts`. Production code in this package does not import the engine.
 
@@ -100,7 +102,7 @@ lifetime, viewport units and regression coverage.
 
 ## Sphere preparation
 
-`prepareSphere(argv, ports)` from `./preparation` (also `./node`), and the `foss-earth-prepare-panorama` command, prepare a sphere from a local file. They take local-file arguments, authored or GPano pose and a mandatory credit. They write dated output under `build/prepared-scenes`: preview, whole and tiled files, plus fragment and provenance outputs. Normalization, source eligibility, sampling, cube and tile rendering and the encoders are public APIs of the owning libraries. Preparation uses no network.
+`prepareSphere(argv, ports)` from `./preparation` (also `./node`), and the `foss-earth-prepare-panorama` command, prepare a sphere from a local file. They take local-file arguments, authored or GPano pose and a mandatory credit. They write dated output under `build/prepared-scenes`: preview, whole and tiled files, plus fragment and provenance outputs. Normalization, source eligibility, sampling, cube and tile rendering and the encoders are public APIs of the owning libraries. Preparation uses no network. `--native-tier single` runs cube and tile reprojection with [projections-WASM](projections-WASM/README.md) in a worker, after its first output matches JavaScript byte for byte; JavaScript is the default.
 
 ## Earlier package name
 

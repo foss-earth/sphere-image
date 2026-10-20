@@ -20,10 +20,9 @@ let core;
 if (tier === "single") {
   let timer;
   try {
-    // The optional module is explicit: the preparation package has no native
-    // dependency and never silently fetches a core in TypeScript mode.
-    if (!modulePath) throw new Error("pass --projection-module pointing to native-projections/index.js");
-    const moduleUrl = pathToFileURL(path.resolve(modulePath));
+    // Only single mode loads a core: this package's projections-WASM, or the
+    // build --projection-module names. TypeScript mode never loads one.
+    const moduleUrl = modulePath ? pathToFileURL(path.resolve(modulePath)) : new URL("../projections-WASM/index.js", import.meta.url);
     const binaryUrl = new URL("./single/projections.wasm", moduleUrl);
     const bytes = readFileSync(binaryUrl);
     const loading = import(moduleUrl.href).then(module => module.instantiateProjectionCore(bytes));

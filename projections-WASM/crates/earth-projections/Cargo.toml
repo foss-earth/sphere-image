@@ -1,0 +1,10 @@
+[package]
+name = "earth-projections"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "AGPL-3.0-only"
+description = "Bounded linear RGB sphere projection and sampling kernels"
+
+[lib]
+crate-type = ["cdylib", "rlib"]

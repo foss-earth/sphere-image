@@ -33,7 +33,7 @@
  *   --out dir                     output folder; default a new dated build/prepared-scenes/ folder
  *   --replace                     allow writing into an existing non-empty folder
  *   --native-tier typescript|typescript-worker|single|auto|threaded  projection backend (typescript)
- *   --projection-module path      native-projections/index.js for opt-in single-worker WASM
+ *   --projection-module path      another projections-WASM/index.js build for single (this package's)
  *
  * Nothing is fetched from the network.
  */
