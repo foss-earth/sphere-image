@@ -278,6 +278,20 @@ describe("injected viewer lifecycle", () => {
     expect(original.release).not.toHaveBeenCalled();expect(sharper.settleReplacement).not.toHaveBeenCalled();await f.advance(1000);
     expect(original.release).toHaveBeenCalledTimes(1);expect(sharper.settleReplacement).toHaveBeenCalledTimes(1);f.viewer.dispose();expect(f.holds.active).toBe(0);
   });
+  it("sizes orbs the renderer says are on screen without placing them on the page, or through projection when it cannot say", async () => {
+    for (const visible of [true, false, undefined]) {
+      const f = fixture(), input = image(); input.placement.marker = [6378147, 100, 0];
+      const project = vi.fn(() => ({ x: 0, y: 0 }));
+      Object.assign(f.options.renderer, { project }, visible === undefined ? {} : { onScreen: vi.fn(() => visible) });
+      const handle = await f.viewer.prepare(input, new AbortController().signal); await handle.ready(); f.viewer.replaceImages([handle]); await flush();
+      f.preview.mockClear(); await f.advance(16);
+      const diameter = (f.preview.mock.calls.at(-1) as unknown[])[1];
+      // Radius 1 m, 200 m away, 900 px tall at 60°.
+      if (visible === false) expect(diameter).toBeNull(); else expect(diameter).toBeCloseTo(900 / (200 * Math.tan(Math.PI / 6)), 9);
+      expect(project).toHaveBeenCalledTimes(visible === undefined ? 1 : 0);
+      f.viewer.dispose();
+    }
+  });
   it("re-resolves an image after waiting for exit instead of entering removed metadata",async()=>{
     const f=fixture(),handle=await f.viewer.prepare(image(),new AbortController().signal);await handle.ready();f.viewer.replaceImages([handle]);await f.viewer.enter("a");
     f.settings.fadeDurationMs=100;f.viewer.exit();await flush();const entering=f.viewer.enter("a");f.viewer.replaceImages([]);await flush();

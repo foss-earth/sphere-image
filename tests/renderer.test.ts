@@ -147,6 +147,37 @@ describe("sphere renderer camera frame", () => {
     const raised = renderer.project(normalize(frame.view.forward.map((value, axis) => value + frame.view.up[axis] * tanHalf * 0.5) as Vec3), frame)!;
     expect(raised.y).toBeCloseTo(262.5, 6);
   });
+
+  it("says whether a direction projects onto the canvas without reading the page's layout", () => {
+    const { camera, engine, renderer } = setup();
+    const box = vi.fn(() => ({ left: 3, top: 5, width: 800, height: 600 }));
+    let canvas: HTMLCanvasElement | null = { getBoundingClientRect: box } as unknown as HTMLCanvasElement;
+    engine.getRenderingCanvas = () => canvas;
+    let state = 7;
+    const random = () => (state = (Math.imul(state, 1103515245) + 12345) >>> 0) / 2 ** 32;
+    let on = 0, off = 0;
+    for (let view = 0; view < 40; view++) {
+      camera.position = new Vector3(random() * 20 - 10, random() * 20 - 10, random() * 20 - 10);
+      camera.setTarget(new Vector3(random() - 0.5, random() - 0.5, random() - 0.5));
+      camera.fov = 0.3 + random() * 2;
+      camera.viewport = view % 3 ? new Viewport(0, 0, 1, 1) : new Viewport(0.1, 0, 0.8, 0.75);
+      canvas = view % 5 === 4 ? null : { getBoundingClientRect: box } as unknown as HTMLCanvasElement;
+      const frame = renderer.cameraFrame()!;
+      for (let k = 0; k < 250; k++) {
+        // Half the directions near the view's edges, where the 1.2 margin and the eye plane decide.
+        const spread = k % 2 ? 4 : 0.2;
+        const direction = k % 2
+          ? [random() * 2 - 1, random() * 2 - 1, random() * 2 - 1] as Vec3
+          : frame.view.forward.map((value, axis) => value * (random() - 0.02) + (frame.view.right[axis] * (random() - 0.5) + frame.view.up[axis] * (random() - 0.5)) * spread * 3) as Vec3;
+        const expected = renderer.project(direction, frame) !== null;
+        const calls = box.mock.calls.length;
+        expect(renderer.onScreen(direction, frame)).toBe(expected);
+        expect(box.mock.calls.length).toBe(calls);
+        if (expected) on++; else off++;
+      }
+    }
+    expect(Math.min(on, off)).toBeGreaterThan(1000);
+  });
 });
 
 describe("head-tracked drawing", () => {

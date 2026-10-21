@@ -84,7 +84,7 @@ export interface ViewerSettings {
   previewHoldMs: number | null;
 }
 export interface ImageViewerOptions {
-  renderer: Pick<SphereRenderer, "available" | "unavailableReason" | "addOrb" | "immersion" | "setAppearance" | "cameraFrame" | "pick" | "project"> & Partial<Pick<SphereRenderer, "pickRay">>;
+  renderer: Pick<SphereRenderer, "available" | "unavailableReason" | "addOrb" | "immersion" | "setAppearance" | "cameraFrame" | "pick" | "project"> & Partial<Pick<SphereRenderer, "pickRay" | "onScreen">>;
   resources: ViewerResources;
   world: ViewerWorldMath;
   poses: ViewerPosePorts;
@@ -155,6 +155,7 @@ function snapshotInput(input: ViewerImageInput): ViewerImageInput {
 
 export function createImageViewer(options: ImageViewerOptions): SettledPublishedImageViewer {
   const { renderer, navigation } = options;
+  const onScreen = (direction: Vec3, frame: SphereCameraFrame): boolean => renderer.onScreen ? renderer.onScreen(direction, frame) : renderer.project(direction, frame) !== null;
   const inFlight = new Set<Promise<unknown>>(), retirementErrors: unknown[] = [];
   const track = <T>(work: Promise<T>): Promise<T> => {
     inFlight.add(work);
@@ -807,7 +808,7 @@ export function createImageViewer(options: ImageViewerOptions): SettledPublished
         const candidates = [...entries.values()].filter(onMap).map(entry => {
           const marker = entry.input.placement.marker; const radius = entry.orb.effectiveRadius(camera);
           const rel = marker ? sub(marker, camera.eye) : null;
-          const diameter = rel && radius !== null && renderer.project(rel, camera) ? radius * camera.viewportHeightCssPx / (Math.max(length(rel), radius) * Math.tan(camera.view.verticalFovRad / 2)) * options.devicePixelsPerCss() : null;
+          const diameter = rel && radius !== null && onScreen(rel, camera) ? radius * camera.viewportHeightCssPx / (Math.max(length(rel), radius) * Math.tan(camera.view.verticalFovRad / 2)) * options.devicePixelsPerCss() : null;
           return { entry, diameter };
         }).sort((a, b) => (b.diameter ?? 0) - (a.diameter ?? 0));
         for (const { entry, diameter } of candidates) {

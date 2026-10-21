@@ -194,6 +194,8 @@ export interface SphereRenderer {
   pickRay(origin: Vec3, direction: Vec3, isOccluded: (eye: Vec3, direction: Vec3, distance: number) => boolean): OrbHit[];
   /** Where a world direction from the eye lands on the canvas, CSS px, or null behind the view. */
   project(direction: Vec3, frame?: SphereCameraFrame): { x: number; y: number } | null;
+  /** Whether `project` would place the direction on the canvas, without reading the page's layout. */
+  onScreen(direction: Vec3, frame?: SphereCameraFrame): boolean;
   /**
    * Test only: renders what `target` shows as float vectors and reads them
    * back, each output in its own render target within one rendered frame:
@@ -893,17 +895,29 @@ export function createSphereRenderer(scene: Scene, options: SphereRendererOption
     return hits.sort((a, b) => Number(b.onSilhouette) - Number(a.onSilhouette) || a.depthMeters - b.depthMeters || (a.id < b.id ? -1 : 1));
   }
 
-  function project(direction: Vec3, frame = currentFrame() ?? undefined): { x: number; y: number } | null {
-    if (!frame) return null;
+  /** Where a direction from the eye falls across the view, −1 to 1 on each axis, or null behind it or well outside. */
+  function viewPoint(direction: Vec3, frame: SphereCameraFrame): { x: number; y: number } | null {
     const z = dot(direction, frame.view.forward);
     if (z <= 1e-6) return null;
     const tanHalf = Math.tan(frame.view.verticalFovRad / 2);
     const x = dot(direction, frame.view.right) / (z * tanHalf * frame.view.aspect);
     const y = dot(direction, frame.view.up) / (z * tanHalf);
     if (Math.abs(x) > 1.2 || Math.abs(y) > 1.2) return null;
+    return { x, y };
+  }
+
+  function project(direction: Vec3, frame = currentFrame() ?? undefined): { x: number; y: number } | null {
+    if (!frame) return null;
+    const point = viewPoint(direction, frame);
+    if (!point) return null;
     const rect = viewportRect();
     if (!rect) return null;
-    return { x: rect.left + ((x + 1) / 2) * rect.width, y: rect.top + ((1 - y) / 2) * rect.height };
+    return { x: rect.left + ((point.x + 1) / 2) * rect.width, y: rect.top + ((1 - point.y) / 2) * rect.height };
+  }
+
+  // `viewportRect` is null exactly when there is no canvas, so this needs no page box.
+  function onScreen(direction: Vec3, frame = currentFrame() ?? undefined): boolean {
+    return !!frame && viewPoint(direction, frame) !== null && engine.getRenderingCanvas() !== null;
   }
 
   // ─── Probe (tests) ──────────────────────────────────────────────────
@@ -998,6 +1012,7 @@ export function createSphereRenderer(scene: Scene, options: SphereRendererOption
     pick,
     pickRay,
     project,
+    onScreen,
     probe,
     setExperiments(next) {
       const wasLean = leanShaders();
