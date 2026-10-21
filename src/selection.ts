@@ -9,31 +9,41 @@ export interface RepresentationChoice<R extends ImageRepresentation> {
   limitation: string | null;
   next: { representation: R; reason: string } | null;
 }
-/** Retained source choice algorithm, using owner hooks for density/cost. */
-export function chooseRepresentation<R extends ImageRepresentation>(
-  representations: readonly R[], role: R["role"] | "any", wantedFaceTexels: number,
+/** Candidates of one role in choice order, with each one's density and estimate failure. */
+interface RankedRepresentations<R extends ImageRepresentation> {
+  candidates: readonly R[];
+  density: ReadonlyMap<R, number>;
+  estimateErrors: ReadonlyMap<R, string>;
+}
+function rankRepresentations<R extends ImageRepresentation>(
+  representations: readonly R[], role: R["role"] | "any",
   registry: readonly ViewerRepresentation<R>[], context: { maxTextureSide: number },
-  admissible: (representation: R) => string | null,
-): RepresentationChoice<R> | null {
+): RankedRepresentations<R> {
   const plugin = (record: R): ViewerRepresentation<R> => {
     const result = registry.find(entry => entry.hooks.projection === record.projection);
     if (!result) throw new Error(`No representation hook for ${record.projection}.`);
     return result;
   };
-  const density = (record: R): number => plugin(record).faceTexels(record);
-  const estimateErrors = new Map<R, string>();
-  const gpuBytes = (record: R): number => {
-    try { return plugin(record).hooks.estimate(record, context).sourceGpu; }
-    catch (error) { estimateErrors.set(record, error instanceof Error ? error.message : String(error)); return Number.POSITIVE_INFINITY; }
-  };
-  const candidates = representations.filter(entry => role === "any" || entry.role === role)
-    .sort((a, b) => density(a) - density(b) || gpuBytes(a) - gpuBytes(b));
+  const candidates = representations.filter(entry => role === "any" || entry.role === role);
+  // Each density and estimate is taken once, before sorting, so a single
+  // candidate (which sorting need not compare) is validated too.
+  const density = new Map<R, number>(), gpuBytes = new Map<R, number>(), estimateErrors = new Map<R, string>();
+  for (const record of candidates) {
+    density.set(record, plugin(record).faceTexels(record));
+    try { gpuBytes.set(record, plugin(record).hooks.estimate(record, context).sourceGpu); }
+    catch (error) { estimateErrors.set(record, error instanceof Error ? error.message : String(error)); gpuBytes.set(record, Number.POSITIVE_INFINITY); }
+  }
+  candidates.sort((a, b) => density.get(a)! - density.get(b)! || gpuBytes.get(a)! - gpuBytes.get(b)!);
+  return { candidates, density, estimateErrors };
+}
+function pickRepresentation<R extends ImageRepresentation>(
+  ranked: RankedRepresentations<R>, wantedFaceTexels: number, admissible: (representation: R) => string | null,
+): RepresentationChoice<R> | null {
+  const { candidates, estimateErrors } = ranked, density = (record: R): number => ranked.density.get(record)!;
   const refusals: { representation: R; reason: string }[] = [];
   let best: R | null = null;
   for (const candidate of candidates) {
-    // Sorting a single candidate need not call the comparator, so validate
-    // each estimate here too. A refused sharper image preserves the fallback.
-    gpuBytes(candidate);
+    // A refused sharper image preserves the fallback.
     const refusal = estimateErrors.get(candidate) ?? admissible(candidate);
     if (refusal) {
       refusals.push({ representation: candidate, reason: refusal });
@@ -51,6 +61,14 @@ export function chooseRepresentation<R extends ImageRepresentation>(
     ? `the largest available is ${Math.round(density(chosen))} texels per face, below the ${Math.round(wantedFaceTexels)} asked for`
     : `a larger representation does not fit: ${refusals.map(refusal => `${refusal.representation.id}: ${refusal.reason}`).join("; ")}`;
   return { representation: chosen, limitation, next };
+}
+/** Retained source choice algorithm, using owner hooks for density/cost. */
+export function chooseRepresentation<R extends ImageRepresentation>(
+  representations: readonly R[], role: R["role"] | "any", wantedFaceTexels: number,
+  registry: readonly ViewerRepresentation<R>[], context: { maxTextureSide: number },
+  admissible: (representation: R) => string | null,
+): RepresentationChoice<R> | null {
+  return pickRepresentation(rankRepresentations(representations, role, registry, context), wantedFaceTexels, admissible);
 }
 
 export interface ViewerSelectionParameters {
@@ -75,13 +93,27 @@ export function createViewerSelection(ports:ViewerSelectionPorts):Pick<ViewerRes
     if(!owner)throw new Error(`No public density hook for ${record.projection}.`);
     return owner.faceTexels(record);
   };
+  // The viewer asks for every orb's preview in every frame. A frozen asset's
+  // previews are ranked once per preview range and texture limit; only the
+  // wanted density and the admission are evaluated on each call.
+  const rankedPreviews=new WeakMap<readonly ImageRepresentation[],{min:number;max:number;maxTextureSide:number;inRange:boolean;ranked:RankedRepresentations<ImageRepresentation>}>();
+  function previewsFor(representations:readonly ImageRepresentation[],faces:{min:number;max:number},maxTextureSide:number) {
+    const kept=rankedPreviews.get(representations);
+    if(kept&&kept.min===faces.min&&kept.max===faces.max&&kept.maxTextureSide===maxTextureSide)return kept;
+    const previews=representations.filter(record=>record.role==="preview"&&record.projection==="cube");
+    const inRange=previews.filter(record=>density(record)>=faces.min&&density(record)<=faces.max);
+    const next={min:faces.min,max:faces.max,maxTextureSide,inRange:inRange.length>0,ranked:rankRepresentations(inRange.length?inRange:previews,"preview",ports.representations,{maxTextureSide})};
+    // Freezing cannot be undone, so a frozen list of frozen records keeps its ranking.
+    if(Object.isFrozen(representations)&&representations.every(record=>Object.isFrozen(record)))rankedPreviews.set(representations,next);
+    return next;
+  }
   function preview(input:ViewerImageInput,diameter:number|null) {
-    const p=ports.parameters(),previews=input.asset.representations.filter(record=>record.role==="preview"&&record.projection==="cube");
-    const inRange=previews.filter(record=>density(record)>=p.previewFaces.min&&density(record)<=p.previewFaces.max);
+    const p=ports.parameters(),{inRange,ranked}=previewsFor(input.asset.representations,p.previewFaces,ports.maxTextureSide());
     const wanted=diameter===null?p.previewFaces.min:previewFaceTexels(diameter,p.previewFovDeg*Math.PI/360,p.previewDensity);
-    const choice=chooseRepresentation(inRange.length?inRange:previews,"preview",Math.min(Math.max(wanted,p.previewFaces.min),p.previewFaces.max),ports.representations,{maxTextureSide:ports.maxTextureSide()},record=>ports.current(input).preview===record.id?null:ports.admissible(record,false));
+    let current:{preview:string|null}|undefined;
+    const choice=pickRepresentation(ranked,Math.min(Math.max(wanted,p.previewFaces.min),p.previewFaces.max),record=>(current??=ports.current(input)).preview===record.id?null:ports.admissible(record,false));
     if(!choice)return null;
-    const range=inRange.length?null:`no preview is within ${p.previewFaces.min}–${p.previewFaces.max} px (scene.panorama.previewFaceRange)`;
+    const range=inRange?null:`no preview is within ${p.previewFaces.min}–${p.previewFaces.max} px (scene.panorama.previewFaceRange)`;
     return {representation:choice.representation,limitation:[range,choice.limitation].filter(Boolean).join("; ")||null};
   }
   const tilesName=(warp:string)=>warp==="equi-angular"?"equi-angular cube tiles":"cube tiles";
