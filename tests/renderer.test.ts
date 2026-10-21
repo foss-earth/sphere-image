@@ -250,6 +250,70 @@ describe("sphere renderer experiments", () => {
     renderer.dispose();
   });
 
+  it("reads the canvas height once in each camera pass its orbs draw in, and again after a shader compiles or in a later task", async () => {
+    let height = 400;
+    const viewportHeightCssPx = vi.fn(() => height);
+    const { renderer, scene, engine } = setup(webGl, {}, { viewportHeightCssPx });
+    const outline = { color: [1, 1, 1, 1] as const, widthPx: 2 };
+    for (const id of ["one", "two"]) renderer.addOrb(id, { ...orbState(scene), outline });
+    const material = scene.getMaterialByName("sphere-orb-material-two") as ShaderMaterial;
+    const widths: number[] = [];
+    const setFloat = material.setFloat.bind(material);
+    vi.spyOn(material, "setFloat").mockImplementation((name, value) => { if (name === "outlineWidth") widths.push(value); return setFloat(name, value); });
+    // The outline is measured in drawn pixels: it shows the height the draw used.
+    const usedHeight = () => 2 * engine.getRenderHeight() / widths.at(-1)!;
+    const frame = () => { engine.beginFrame(); scene.render(); engine.endFrame(); };
+
+    frame();
+    expect(renderer.drawRecords().filter(record => record.target.startsWith("orb:"))).toHaveLength(2);
+    expect(viewportHeightCssPx).toHaveBeenCalledTimes(1);
+    expect(usedHeight()).toBeCloseTo(400, 9);
+    height = 200;
+    frame();
+    expect(viewportHeightCssPx).toHaveBeenCalledTimes(2);
+    expect(usedHeight()).toBeCloseTo(200, 9);
+
+    // A draw in the same pass and task uses what the pass read.
+    const draw = () => { const mesh = scene.getMeshByName("sphere-orb-two")!; mesh.onBeforeRenderObservable.notifyObservers(mesh); };
+    height = 300;
+    draw();
+    expect(viewportHeightCssPx).toHaveBeenCalledTimes(2);
+    expect(usedHeight()).toBeCloseTo(200, 9);
+    // A compiled shader calls the host, which might have changed the page.
+    material.onCompiled!(null as never);
+    draw();
+    expect(viewportHeightCssPx).toHaveBeenCalledTimes(3);
+    expect(usedHeight()).toBeCloseTo(300, 9);
+    height = 350;
+    await Promise.resolve();
+    draw();
+    expect(viewportHeightCssPx).toHaveBeenCalledTimes(4);
+    expect(usedHeight()).toBeCloseTo(350, 9);
+    renderer.dispose();
+  });
+
+  it("gives the last 600 draws' records in order, however many were drawn", () => {
+    const { renderer, scene, camera, engine } = setup(webGl);
+    renderer.addOrb("place", orbState(scene));
+    const drawn: ReturnType<typeof renderer.drawRecords>[number][] = [];
+    for (let frame = 0; frame < 1300; frame++) {
+      camera.position = new Vector3(frame % 7, 0, -10);
+      const id = engine.frameId;
+      engine.beginFrame();
+      scene.render();
+      engine.endFrame();
+      const records = renderer.drawRecords();
+      for (const record of records) if (record.frameId === id) drawn.push(record);
+      const expected = drawn.slice(-600);
+      // Plain comparisons: an expect per record would take seconds.
+      let same = records.length === expected.length;
+      for (let index = 0; same && index < records.length; index++) same = records[index] === expected[index];
+      if (!same) expect.fail(`frame ${frame}: ${records.length} records, not the last ${expected.length} drawn`);
+    }
+    expect(drawn.length).toBeGreaterThanOrEqual(1300);
+    renderer.dispose();
+  });
+
   it("gives the same camera revision with the bookkeeping experiment as without", () => {
     const plain = setup(webGl).renderer.cameraFrame()!;
     const lean = setup(webGl, { bookkeeping: true }).renderer.cameraFrame()!;

@@ -365,6 +365,8 @@ export function imageFromClipMatrix(inverseViewRotProj: Matrix, content: Mat3, r
 
 /** Nested under profileBabylonScene's draw phase, which these draws run in. */
 const UNIFORMS_SECTION = "render/draw/panorama uniforms";
+/** How many of the last draws drawRecords returns. */
+const RECORDS_KEPT = 600;
 
 export function createSphereRenderer(scene: Scene, options: SphereRendererOptions): SphereRenderer {
   const engine = scene.getEngine();
@@ -390,14 +392,16 @@ export function createSphereRenderer(scene: Scene, options: SphereRendererOption
   /** Whether draws are recorded and their camera frames kept for the negative control. */
   const keepingRecords = (): boolean => !experiments.bookkeeping || captureDraws;
   let delayFrames = 0;
+  /** The last RECORDS_KEPT draws, in order; trimmed in batches, so a draw does not shift the whole list. */
   const records: { frameId: number; target: string; cameraRevision: string; uniformRevision: string }[] = [];
   const orbs = new Map<string, OrbInternal>();
   let disposed = false;
   // The globe may sleep while an asynchronously compiled shader finishes.
   // Its first usable frame must not wait for another camera or map update.
-  const onCompiled = (): void => { if (!disposed) options.requestRender(); };
+  const onCompiled = (): void => { forgetPassHeight(); if (!disposed) options.requestRender(); };
   const shaderErrors = new Set<string>();
   const onError: NonNullable<ShaderMaterial["onError"]> = (_effect, message) => {
+    forgetPassHeight();
     if (disposed || shaderErrors.has(message)) return;
     shaderErrors.add(message);
     options.onError?.(message);
@@ -411,13 +415,28 @@ export function createSphereRenderer(scene: Scene, options: SphereRendererOption
   };
 
   const canvasCssHeight = (): number => options.viewportHeightCssPx();
+  // The height every draw of one camera pass reads, read at the pass's first draw. Between two draws a pass runs
+  // only Babylon's draw loop, the terrain's material plugins and these observers, none of which writes the page,
+  // and these materials' compile callbacks, which call the host and so forget it. Babylon numbers each camera
+  // and render target pass, and the height is read again in each task.
+  let passRenderId = -1, passCssHeight = 0;
+  function forgetPassHeight(): void { passRenderId = -1; }
+  function drawCssHeight(): number {
+    const renderId = scene.getRenderId();
+    if (renderId !== passRenderId) {
+      if (passRenderId === -1) queueMicrotask(forgetPassHeight);
+      passRenderId = renderId;
+      passCssHeight = canvasCssHeight();
+    }
+    return passCssHeight;
+  }
   const headTracked = (): boolean => options.isHeadTracked?.() === true;
   /** The view that replaces the camera's: none while a head is tracked. */
   const presentationView = (): NavigationPresentation | null => (headTracked() ? null : options.getPresentationView());
   const immersionView = (): NavigationPresentation | null => (headTracked() ? null : immersionState?.view ?? null);
 
   /** The camera the globe is drawn with this frame, or the presentation that replaces its view. */
-  function currentFrame(presentation = presentationView()): SphereCameraFrame | null {
+  function currentFrame(presentation = presentationView(), height = canvasCssHeight): SphereCameraFrame | null {
     const camera: Camera | null = options.getCamera();
     if (!camera) return null;
     // The eye is updated with the view matrix: bring both up to date before reading either.
@@ -448,7 +467,7 @@ export function createSphereRenderer(scene: Scene, options: SphereRendererOption
       viewRotProj,
       inverseViewRotProj,
       view: { ...basis, verticalFovRad, aspect },
-      viewportHeightCssPx: canvasCssHeight(),
+      viewportHeightCssPx: height(),
     };
     if (!experiments.bookkeeping) return { ...frame, revision: frameRevision(eye, basis, verticalFovRad, aspect) };
     // Formatted only when something reads it: a check's records, never an ordinary draw.
@@ -460,27 +479,27 @@ export function createSphereRenderer(scene: Scene, options: SphereRendererOption
   }
 
   /** What the camera frame depends on, cheaply: the camera, its matrices' versions, the aspect and the canvas height. */
-  function cameraKey(): string {
+  function cameraKey(height: () => number): string {
     const camera = options.getCamera();
     if (!camera) return "";
-    return `${camera.uniqueId}:${camera.getViewMatrix().updateFlag}:${camera.getProjectionMatrix().updateFlag}:${engine.getAspectRatio(camera)}:${canvasCssHeight()}`;
+    return `${camera.uniqueId}:${camera.getViewMatrix().updateFlag}:${camera.getProjectionMatrix().updateFlag}:${engine.getAspectRatio(camera)}:${height()}`;
   }
   /** The same inputs as cameraKey, compared in place without building a string for every draw. */
   const lastCameraInputs = { camera: -1, view: -1, projection: -1, aspect: Number.NaN, height: Number.NaN };
-  function cameraInputsChanged(): boolean {
+  function cameraInputsChanged(height: () => number): boolean {
     const camera = options.getCamera();
     const id = camera?.uniqueId ?? -1;
     const view = camera ? camera.getViewMatrix().updateFlag : -1;
     const projection = camera ? camera.getProjectionMatrix().updateFlag : -1;
     const aspect = camera ? engine.getAspectRatio(camera) : 0;
-    const height = camera ? canvasCssHeight() : 0;
+    const cssHeight = camera ? height() : 0;
     const last = lastCameraInputs;
-    const changed = last.camera !== id || last.view !== view || last.projection !== projection || last.aspect !== aspect || last.height !== height;
+    const changed = last.camera !== id || last.view !== view || last.projection !== projection || last.aspect !== aspect || last.height !== cssHeight;
     last.camera = id;
     last.view = view;
     last.projection = projection;
     last.aspect = aspect;
-    last.height = height;
+    last.height = cssHeight;
     return changed;
   }
 
@@ -491,15 +510,16 @@ export function createSphereRenderer(scene: Scene, options: SphereRendererOption
   let frameCache: { id: number; key: string; presentation: NavigationPresentation | null; frame: SphereCameraFrame | null } | null = null;
   const history: SphereCameraFrame[] = [];
   let historyFrameId = -1;
-  function drawFrame(): { current: SphereCameraFrame; uniforms: SphereCameraFrame } | null {
+  /** `height` is drawCssHeight in a draw, which reads the page once a pass. */
+  function drawFrame(height = canvasCssHeight): { current: SphereCameraFrame; uniforms: SphereCameraFrame } | null {
     const id = engine.frameId;
     const presentation = presentationView();
     const lean = experiments.bookkeeping;
-    const key = lean ? "" : cameraKey();
+    const key = lean ? "" : cameraKey(height);
     // Always evaluated, so the inputs it keeps are this draw's.
-    const inputsChanged = lean && cameraInputsChanged();
+    const inputsChanged = lean && cameraInputsChanged(height);
     if (!frameCache || frameCache.id !== id || frameCache.key !== key || inputsChanged || frameCache.presentation !== presentation) {
-      const frame = currentFrame(presentation);
+      const frame = currentFrame(presentation, height);
       frameCache = { id, key, presentation, frame };
       if (!frame) {
         // Nothing to keep.
@@ -526,7 +546,7 @@ export function createSphereRenderer(scene: Scene, options: SphereRendererOption
   function record(target: string, current: SphereCameraFrame, uniforms: SphereCameraFrame): void {
     if (!keepingRecords()) return;
     records.push({ frameId: engine.frameId, target, cameraRevision: current.revision, uniformRevision: uniforms.revision });
-    if (records.length > 600) records.splice(0, records.length - 600);
+    if (records.length >= 2 * RECORDS_KEPT) records.splice(0, records.length - RECORDS_KEPT);
   }
 
   const quadData = new VertexData();
@@ -704,7 +724,7 @@ export function createSphereRenderer(scene: Scene, options: SphereRendererOption
       },
     };
     const observer: Observer<Mesh> | null = mesh.onBeforeRenderObservable.add(timed(() => {
-      const frames = drawFrame();
+      const frames = drawFrame(drawCssHeight);
       if (!frames) return;
       // Expanding, the orb is the whole ball, clipped by terrain where its overlay has not yet revealed it.
       const radius = orb.expansion?.radiusMeters ?? orb.drawnRadius(length(sub(orb.state.marker ?? frames.uniforms.eye, frames.uniforms.eye)), frames.uniforms);
@@ -713,7 +733,7 @@ export function createSphereRenderer(scene: Scene, options: SphereRendererOption
       if (orb.applyUniforms(material, frames.uniforms, radius, opacity)) record(`orb:${id}`, frames.current, frames.uniforms);
     }));
     const revealObserver: Observer<Mesh> | null = revealMesh.onBeforeRenderObservable.add(timed(() => {
-      const frames = drawFrame();
+      const frames = drawFrame(drawCssHeight);
       if (!frames || !orb.expansion) return;
       const kind = orb.expansion.source?.kind;
       const target = kind === "equirectangular" ? orb.revealEquirectMaterial! : kind === "tiles" ? orb.revealTilesMaterial! : revealMaterial;
@@ -794,8 +814,8 @@ export function createSphereRenderer(scene: Scene, options: SphereRendererOption
       const material = immersionMesh.material as ShaderMaterial | null;
       if (!material) return;
       const fade = immersionView();
-      const override = fade ? currentFrame(fade) : null;
-      const frames = override ? { current: override, uniforms: override } : drawFrame();
+      const override = fade ? currentFrame(fade, drawCssHeight) : null;
+      const frames = override ? { current: override, uniforms: override } : drawFrame(drawCssHeight);
       if (!frames) return;
       applyImmersionUniforms(material, frames.uniforms);
       record("immersion", frames.current, frames.uniforms);
@@ -1031,7 +1051,7 @@ export function createSphereRenderer(scene: Scene, options: SphereRendererOption
     captureDraws(capture) {
       captureDraws = capture;
     },
-    drawRecords: () => records,
+    drawRecords: () => (records.length > RECORDS_KEPT ? records.slice(-RECORDS_KEPT) : records),
     inspectOrb(id, frame) {
       const orb = orbs.get(id);
       if (!orb) return null;
