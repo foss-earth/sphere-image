@@ -43,7 +43,11 @@ rounded main-thread percentage and fps. Full run rows are retained in research's
 - An independent float32 shader-corner oracle checks 30,000 seeded quads,
   projection matrices, scales and cancellation cases.
 - Integration tests cover camera turns, delayed frames, full-screen expansion,
-  outline margins, display scale and tracked headsets.
+  outline margins, display scale and tracked headsets. Another 1,000 seeded
+  rolling/zooming delayed-camera cases compare dispatch with the exact quad
+  captured from the material's shader uniforms. Five deliberate broken variants
+  are caught: missing rejection, rounding slack, outline margin, delayed basis
+  and the headset exemption. All 282 tests and implementation checks pass.
 - Nine fixed-clock screenshot states match byte for byte on WebGPU, WebGL2
   and an actual WebGL1 context on this machine: map, three entry moments,
   immersion, three exit moments and map again. Both variants must produce
