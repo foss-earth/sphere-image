@@ -251,6 +251,32 @@ export function orbQuad(rel: Vec3, radius: number, frame: Pick<SphereCameraFrame
   return { center: rel, u: scale(u, half), v: scale(v, half), fullscreen };
 }
 
+/** Reject only a quad wholly outside a side clip plane or behind the eye. */
+export function orbQuadOutsideView(quad: ReturnType<typeof orbQuad>, matrix: Matrix): boolean {
+  if (quad.fullscreen) return false;
+  const { center: c, u, v } = quad, m = matrix.m;
+  const x = c[0] * m[0] + c[1] * m[4] + c[2] * m[8] + m[12];
+  const y = c[0] * m[1] + c[1] * m[5] + c[2] * m[9] + m[13];
+  const w = c[0] * m[3] + c[1] * m[7] + c[2] * m[11] + m[15];
+  const ux = u[0] * m[0] + u[1] * m[4] + u[2] * m[8], vx = v[0] * m[0] + v[1] * m[4] + v[2] * m[8];
+  const uy = u[0] * m[1] + u[1] * m[5] + u[2] * m[9], vy = v[0] * m[1] + v[1] * m[5] + v[2] * m[9];
+  const uw = u[0] * m[3] + u[1] * m[7] + u[2] * m[11], vw = v[0] * m[3] + v[1] * m[7] + v[2] * m[11];
+  // Bound rounding of the shader's float32 inputs, corner sums and matrix
+  // products by their magnitudes before cancellation, including translation.
+  // Keep ambiguous, nonfinite and boundary quads. No near/far-plane convention
+  // is assumed, so this works for both WebGL and WebGPU projections.
+  const slack = 1e-4 * (
+    (Math.abs(c[0]) + Math.abs(u[0]) + Math.abs(v[0])) * (Math.abs(m[0]) + Math.abs(m[1]) + Math.abs(m[3])) +
+    (Math.abs(c[1]) + Math.abs(u[1]) + Math.abs(v[1])) * (Math.abs(m[4]) + Math.abs(m[5]) + Math.abs(m[7])) +
+    (Math.abs(c[2]) + Math.abs(u[2]) + Math.abs(v[2])) * (Math.abs(m[8]) + Math.abs(m[9]) + Math.abs(m[11])) +
+    Math.abs(m[12]) + Math.abs(m[13]) + Math.abs(m[15]));
+  return x - w - Math.abs(ux - uw) - Math.abs(vx - vw) > slack ||
+    -x - w - Math.abs(ux + uw) - Math.abs(vx + vw) > slack ||
+    y - w - Math.abs(uy - uw) - Math.abs(vy - vw) > slack ||
+    -y - w - Math.abs(uy + uw) - Math.abs(vy + vw) > slack ||
+    -w - Math.abs(uw) - Math.abs(vw) > slack;
+}
+
 /** The radius that keeps an orb's projected diameter within the marker bounds, metres. */
 export function effectiveOrbRadius(radiusMeters: number, distance: number, frame: Pick<SphereCameraFrame, "view" | "viewportHeightCssPx">, bounds: { min: number; max: number }): number {
   const tanHalf = Math.tan(frame.view.verticalFovRad / 2);
@@ -627,7 +653,17 @@ export function createSphereRenderer(scene: Scene, options: SphereRendererOption
     const revealMesh = new Mesh(`sphere-orb-reveal-${id}`, scene);
     quadData.applyToMesh(revealMesh);
     for (const each of [mesh, revealMesh]) {
-      each.alwaysSelectAsActiveMesh = true;
+      // The shader positions this quad itself, so Babylon's mesh bounds are
+      // unrelated. Test the actual shader quad for each camera pass instead.
+      each.isInFrustum = () => {
+        // A tracked headset may draw several eyes from one evaluation.
+        if (headTracked()) return true;
+        const frames = drawFrame(drawCssHeight), marker = orb.state.marker;
+        if (!frames || !marker) return true;
+        const rel = sub(marker, frames.uniforms.eye);
+        const radius = orb.expansion?.radiusMeters ?? orb.drawnRadius(length(rel), frames.uniforms);
+        return !orbQuadOutsideView(orbQuad(rel, radius, frames.uniforms, options.getCamera()?.minZ ?? NEAR_PLANE_WITHOUT_CAMERA, orb.state.outline?.widthPx ?? 0), frames.uniforms.viewRotProj);
+      };
       each.isPickable = false;
       each.doNotSyncBoundingInfo = true;
     }

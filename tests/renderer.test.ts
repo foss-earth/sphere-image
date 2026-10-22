@@ -1,7 +1,7 @@
 import { BaseTexture, FreeCamera, Matrix, NullEngine, Scene, ShaderLanguage, ShaderMaterial, Vector3, Vector4, Viewport } from "@babylonjs/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { dot, length, normalize, type Mat3, type Vec3 } from "@foss-earth/images";
-import { createSphereRenderer, imageFromClipMatrix, orbDrawConstants, orbQuad, type SphereRendererExperiments, type SphereRendererOptions } from "../src/renderer.js";
+import { createSphereRenderer, imageFromClipMatrix, orbDrawConstants, orbQuad, orbQuadOutsideView, type SphereRendererExperiments, type SphereRendererOptions } from "../src/renderer.js";
 
 const engines: NullEngine[] = [];
 afterEach(() => { for (const engine of engines.splice(0)) engine.dispose(); });
@@ -229,6 +229,96 @@ describe("sphere renderer experiments", () => {
   };
   const orbState = (scene: Scene) => ({ marker: [0, 0, 0] as Vec3, radiusMeters: 1, content, texture: new BaseTexture(scene), visible: true, outline: null, displayScale: 1 });
 
+  it("submits only visible shader quads and restores them when the camera turns without changing mesh visibility", () => {
+    const { renderer, scene, camera, engine } = setup(webGl);
+    renderer.addOrb("front", orbState(scene));
+    renderer.addOrb("behind", { ...orbState(scene), marker: [0, 0, -30] });
+    renderer.addOrb("side", { ...orbState(scene), marker: [100, 0, 0] });
+    const frame = () => { engine.beginFrame(); scene.render(); engine.endFrame(); return renderer.drawRecords().filter(r => r.frameId === engine.frameId - 1).map(r => r.target); };
+    expect(frame()).toEqual(["orb:front"]);
+    camera.setTarget(new Vector3(0, 0, -30));
+    expect(frame()).toEqual(["orb:behind"]);
+    camera.setTarget(new Vector3(100, 0, 0));
+    expect(frame()).toEqual(["orb:side"]);
+    // isVisible stays available to explicit render lists and to the probe's
+    // separate meshes; only Babylon's frustum dispatch is overridden.
+    expect(scene.getMeshByName("sphere-orb-front")!.isVisible).toBe(true);
+    renderer.dispose();
+  });
+
+  it("culls with the delayed uniforms and keeps expanding full-screen quads", () => {
+    const { renderer, scene, camera, engine } = setup(webGl);
+    const front = renderer.addOrb("front", orbState(scene));
+    renderer.addOrb("behind", { ...orbState(scene), marker: [0, 0, -30] });
+    renderer.setUniformDelayFrames(1);
+    const frame = () => { engine.beginFrame(); scene.render(); engine.endFrame(); return renderer.drawRecords().filter(r => r.frameId === engine.frameId - 1).map(r => r.target); };
+    expect(frame()).toEqual(["orb:front"]);
+    camera.setTarget(new Vector3(0, 0, -30));
+    expect(frame()).toEqual(["orb:front"]);
+    expect(frame()).toEqual(["orb:behind"]);
+    camera.setTarget(Vector3.Zero());
+    front.setExpansion({ radiusMeters: 100, reveal: 0.5 });
+    const expanded = frame();
+    expect(expanded).toContain("orb:front");
+    expect(expanded).toContain("reveal:front");
+    renderer.dispose();
+  });
+
+  it("keeps headset orbs eligible for both eyes", () => {
+    const { renderer, scene } = setup(webGl, {}, { isHeadTracked: () => true });
+    renderer.addOrb("behind", { ...orbState(scene), marker: [0, 0, -30] });
+    scene.render();
+    expect(renderer.drawRecords().map(record => record.target)).toContain("orb:behind");
+    renderer.dispose();
+  });
+
+  it("includes outline margins and display scale when an orb centre is off screen", () => {
+    const { renderer, scene, engine } = setup(webGl);
+    renderer.setAppearance({ previewFovDeg: 90, markerDiameterCssPx: { min: 0, max: 1000000 }, hitTargetDiameterCssPx: 44 });
+    const orb = renderer.addOrb("edge", { ...orbState(scene), marker: [10, 0, 0], radiusMeters: 0.1,
+      outline: { color: [1, 1, 0, 1], widthPx: 100 } });
+    const frame = () => { engine.beginFrame(); scene.render(); engine.endFrame(); return renderer.drawRecords().filter(r => r.frameId === engine.frameId - 1).map(r => r.target); };
+    expect(frame()).toContain("orb:edge");
+    orb.update({ outline: null });
+    expect(frame()).not.toContain("orb:edge");
+    orb.update({ displayScale: 100 });
+    expect(frame()).toContain("orb:edge");
+    renderer.dispose();
+  });
+
+  it("tests the very quad sent to the shader while delayed cameras roll, zoom and move markers", () => {
+    const { renderer, scene, camera, engine } = setup(webGl);
+    const orb = renderer.addOrb("moving", orbState(scene));
+    renderer.setUniformDelayFrames(2);
+    const mesh = scene.getMeshByName("sphere-orb-moving")!;
+    const material = mesh.material as ShaderMaterial;
+    const vectors = new Map<string, Vec3>();
+    let matrix = Matrix.Identity();
+    const setMatrix = material.setMatrix.bind(material), setVector = material.setVector3.bind(material);
+    vi.spyOn(material, "setMatrix").mockImplementation((name, value) => { if (name === "viewRotProj") matrix = value; return setMatrix(name, value); });
+    vi.spyOn(material, "setVector3").mockImplementation((name, value) => { vectors.set(name, [value.x, value.y, value.z]); return setVector(name, value); });
+    let seed = 73;
+    const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 2 ** 32; };
+    let rejected = 0;
+    for (let index = 0; index < 1000; index++) {
+      const roll = random() * Math.PI * 2;
+      camera.upVector.set(Math.sin(roll), Math.cos(roll), 0);
+      camera.fov = 0.5 + random();
+      orb.update({ marker: [(random() - 0.5) * 30, (random() - 0.5) * 10, 0], displayScale: 0.5 + random() * 2,
+        outline: { color: [1, 1, 0, 1], widthPx: random() * 10 } });
+      engine.beginFrame(); scene.render();
+      // Force the reference preparation even when dispatch culled the mesh.
+      mesh.onBeforeRenderObservable.notifyObservers(mesh);
+      const expected = !orbQuadOutsideView({ center: vectors.get("quadCenter")!, u: vectors.get("quadU")!, v: vectors.get("quadV")!, fullscreen: false }, matrix);
+      const actual = mesh.isInFrustum([]);
+      if (!actual) rejected++;
+      if (actual !== expected) expect.fail(`dispatch disagreed with its shader quad at case ${index}`);
+      engine.endFrame();
+    }
+    expect(rejected).toBeGreaterThan(100);
+    renderer.dispose();
+  });
+
   it("records draws only while a check captures once the bookkeeping experiment is on", () => {
     const { renderer, scene } = setup(webGl);
     renderer.addOrb("place", orbState(scene));
@@ -297,7 +387,7 @@ describe("sphere renderer experiments", () => {
     renderer.addOrb("place", orbState(scene));
     const drawn: ReturnType<typeof renderer.drawRecords>[number][] = [];
     for (let frame = 0; frame < 1300; frame++) {
-      camera.position = new Vector3(frame % 7, 0, -10);
+      camera.position = new Vector3((frame % 7) / 10, 0, -10);
       const id = engine.frameId;
       engine.beginFrame();
       scene.render();
