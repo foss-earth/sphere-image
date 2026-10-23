@@ -104,6 +104,16 @@ lifetime, viewport units and regression coverage.
 
 `prepareSphere(argv, ports)` from `./preparation` (also `./node`), and the `foss-earth-prepare-panorama` command, prepare a sphere from a local file. They take local-file arguments, authored or GPano pose and a mandatory credit. They write dated output under `build/prepared-scenes`: preview, whole and tiled files, plus fragment and provenance outputs. Normalization, source eligibility, sampling, cube and tile rendering and the encoders are public APIs of the owning libraries. Preparation uses no network. `--native-tier single` runs cube and tile reprojection with [projections-WASM](projections-WASM/README.md) in a worker, after its first output matches JavaScript byte for byte; JavaScript is the default.
 
+## Downloading originals
+
+`./download` and `foss-earth-download-panorama` acquire an explicitly supplied
+original, or an owned Google 360 photo through the Street View Publish API.
+See [download and import](docs/download-and-import.md). `--prepare-out` runs the
+existing preparation API to produce previews, an equirectangular fallback and
+**equi-angular cube tiles (EAC)**. No public Google display tiles are scraped,
+stored or converted. Run `npm run test:download` for bounded acquisition and
+the download-to-EAC integration test.
+
 ## Earlier package name
 
 This package was named `@foss-earth/360`. Consumers import `@foss-earth/sphere-image`.

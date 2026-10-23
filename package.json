@@ -9,6 +9,11 @@
     "url": "https://github.com/foss-earth/sphere-image.git"
   },
   "exports": {
+    "./download": {
+      "types": "./node/download.d.mts",
+      "import": "./node/download.mjs"
+    },
+    "./download-cli": "./node/download-cli.mjs",
     ".": {
       "source": "./src/index.ts",
       "types": "./dist/index.d.ts",
@@ -133,6 +138,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit --tsBuildInfoFile node_modules/.tmp/typecheck.tsbuildinfo",
     "lint": "eslint . --cache --cache-strategy content --cache-location node_modules/.cache/eslint/",
     "test": "vitest run --maxWorkers=50%",
+    "test:download": "node --test node/download.test.mjs",
     "ci": "npm run check:implementation",
     "typecheck:consumer": "tsc -p fixtures/tsconfig.json",
     "test:consumer": "node scripts/check-public-consumer.mjs",
@@ -140,7 +146,7 @@
     "check:wasm": "node projections-WASM/scripts/check.mjs",
     "check:parity": "node projections-WASM/scripts/check-projections.mjs --large",
     "test:wasm": "node --test projections-WASM/tests/*.test.mjs",
-    "check:implementation": "npm run typecheck && npm run lint && npm run build && npm test && npm run typecheck:consumer"
+    "check:implementation": "npm run typecheck && npm run lint && npm run build && npm test && npm run test:download && npm run typecheck:consumer"
   },
   "peerDependencies": {
     "@foss-earth/renderer": "0.1.0",
@@ -168,6 +174,7 @@
   },
   "description": "Image viewer composition and camera handover through explicit host ports",
   "bin": {
+    "foss-earth-download-panorama": "./node/download-cli.mjs",
     "foss-earth-prepare-panorama": "./node/prepare-cli.mjs"
   }
 }
