@@ -9,11 +9,11 @@ const root = new URL("../", import.meta.url);
 const binary = new URL("single/projections.wasm", root);
 const core = await instantiateProjectionCore(readFileSync(binary));
 const faces = ["px", "nx", "py", "ny", "pz", "nz"];
-let cases = 0, values = 0, nativeMs = 0, referenceMs = 0;
+let cases = 0, values = 0, wasmMs = 0, referenceMs = 0;
 function check(request, expected) {
   let start = performance.now();
   const actual = core.renderEquirectRegion(request);
-  nativeMs += performance.now() - start;
+  wasmMs += performance.now() - start;
   start = performance.now();
   const reference = expected();
   referenceMs += performance.now() - start;
@@ -59,7 +59,7 @@ assert.ok(stats.memoryBytes <= 256 * 1024 * 1024);
 // The reference is the built preparation module of each sphere library.
 const references = ["sphere-cubemap", "sphere-tiled-cubemap", "sphere-equirectangular"].map(name => new URL(import.meta.resolve(`@foss-earth/${name}/preparation`)));
 const inputs = [binary, new URL("core.js", root), new URL("index.js", root), new URL("crates/earth-projections/src/lib.rs", root), ...references];
-const report = { parity: "same", cases, values, largeSourceBytes, nativeMs, referenceMs, ...stats,
+const report = { parity: "same", cases, values, largeSourceBytes, wasmMs, referenceMs, ...stats,
   receipts: Object.fromEntries(inputs.map(url => [fileURLToPath(url), createHash("sha256").update(readFileSync(url)).digest("hex")])) };
 // Reports go under the owning repository's ignored build/.
 const reports = new URL("../build/projections-WASM/", root);

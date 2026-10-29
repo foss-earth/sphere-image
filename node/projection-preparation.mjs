@@ -8,8 +8,8 @@ function option(argv, name) {
 /** Actual CLI preparation in one owning worker. The complete original sync
  * implementation stays available as `prepareSphere` and tier `typescript`. */
 export async function prepareSphereAsync(argv, ports = {}) {
-  const tier = option(argv, "native-tier") ?? "typescript";
-  if (!["typescript", "typescript-worker", "single", "auto", "threaded"].includes(tier)) throw new Error("--native-tier is typescript, typescript-worker, single, auto or threaded");
+  const tier = option(argv, "wasm-tier") ?? "typescript";
+  if (!["typescript", "typescript-worker", "single", "auto", "threaded"].includes(tier)) throw new Error("--wasm-tier is typescript, typescript-worker, single, auto or threaded");
   if (tier === "typescript" || tier === "auto") return prepareSphere(argv, ports);
   const worker = new Worker(new URL("./projection-preparation-worker.mjs", import.meta.url), {
     workerData: { argv, tier, modulePath: option(argv, "projection-module"), ownerDirectory: ports.ownerDirectory },

@@ -5,5 +5,5 @@ export interface PreparedSphere { exitCode: number; out?: string; help?: string;
 /** Local files only; default scratch belongs to the supplied owner directory. */
 export function prepareSphere(argv: readonly string[], ports?: PreparationPorts): PreparedSphere;
 
-/** Equal-work Node worker preparation; --native-tier selects the projection kernel. */
+/** Equal-work Node worker preparation; --wasm-tier selects the projection kernel. */
 export function prepareSphereAsync(argv: readonly string[], ports?: PreparationPorts): Promise<PreparedSphere>;

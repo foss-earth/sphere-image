@@ -32,7 +32,7 @@
  *   --url-prefix media/garden/    prefix for the fragment's relative URLs
  *   --out dir                     output folder; default a new dated build/prepared-scenes/ folder
  *   --replace                     allow writing into an existing non-empty folder
- *   --native-tier typescript|typescript-worker|single|auto|threaded  projection backend (typescript)
+ *   --wasm-tier typescript|typescript-worker|single|auto|threaded  projection backend (typescript)
  *   --projection-module path      another projections-WASM/index.js build for single (this package's)
  *
  * Nothing is fetched from the network.
@@ -153,7 +153,7 @@ export function prepareSphere(argv, ports = {}) {
     const help = readFileSync(scriptPath, "utf8").split("*/")[0];
     (ports.log ?? console.log)(help); return { exitCode: options.help ? 0 : 1, help };
   }
-  if (["single", "typescript-worker", "threaded"].includes(options["native-tier"]) && !ports.projectionReport) throw new Error("Use prepareSphereAsync or the CLI for worker projection tiers");
+  if (["single", "typescript-worker", "threaded"].includes(options["wasm-tier"]) && !ports.projectionReport) throw new Error("Use prepareSphereAsync or the CLI for worker projection tiers");
   const previewSizes = sizes(options["preview-face-sizes"], "preview-face-sizes");
   if (previewSizes.length === 0) throw new Error("--preview-face-sizes needs at least one size: every panorama needs a preview cube");
   const immersionWidths = sizes(options["immersion-widths"], "immersion-widths");
@@ -280,7 +280,7 @@ export function prepareSphere(argv, ports = {}) {
     settings,
     processing: "EXIF orientation applied once; colour checked as sRGB and not converted; opaque alpha dropped; resampled in linear light and encoded to sRGB once. Faces follow the format's cube table; tiled faces carry a gutter resampled past their edges.",
     outputs,
-    nativeCores: [ports.projectionReport?.() ?? { core: "projections", requested: options["native-tier"] ?? "typescript", actual: "typescript", placement: "original", state: "ready", parity: "not-run", scope: "cube faces and tiled/gutter equirectangular reprojection" }],
+    wasmCores: [ports.projectionReport?.() ?? { core: "projections", requested: options["wasm-tier"] ?? "typescript", actual: "typescript", placement: "original", state: "ready", parity: "not-run", scope: "cube faces and tiled/gutter equirectangular reprojection" }],
     ...(tileSets.length ? { tiles: tileSets } : {}),
   };
   writeFileSync(path.join(out, "prepared.json"), `${JSON.stringify(provenance, null, 2)}\n`);

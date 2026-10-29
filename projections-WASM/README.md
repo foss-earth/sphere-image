@@ -4,7 +4,7 @@ The Rust twin of the sphere preparation libraries' reprojection kernels,
 re-exported as [projections-TS](../projections-TS/index.js): `sphere-equirectangular`'s
 sampling and `cubePreparationPlan`, `sphere-cubemap`'s `renderCubeFace` and
 `sphere-tiled-cubemap`'s `renderCubeTile`. Sphere preparation selects it with
-`--native-tier single`; JavaScript remains the default. Importing performs no
+`--wasm-tier single`; JavaScript remains the default. Importing performs no
 fetch, compilation or worker creation.
 
 The kernels operate on the preparation libraries' **linear Float32 RGB**
@@ -42,10 +42,10 @@ const tile = renderCubeTile(plan, "px", faceSize, "equi-angular", 2, 256, 0, 0, 
 ```
 
 Omit the last `core` argument to use the original JavaScript loop. Passing a
-core selects the native operation explicitly; unsupported sources, bounds, load
+core selects the WASM operation explicitly; unsupported sources, bounds, load
 failures and traps throw rather than silently selecting JavaScript. The bulk
 ports require the equirectangular level carried by `cubePreparationPlan`;
-arbitrary custom sampler functions are not serializable native kernels.
+arbitrary custom sampler functions are not serializable WASM kernels.
 `sampleEquirect`, `createEquirectSourceSampler` and `cubePreparationPlan` also
 accept the core as their last optional argument. Supplying the sampling port
 alone does not change a bulk renderer's default implementation.
@@ -69,23 +69,23 @@ image per face or worker. `single` loads this folder's core;
 Keep the same input, options, encoder and workers for both arms:
 
 ```sh
-node node/prepare-cli.mjs --input photograph.jpg --pose pose.json --attribution "Photographer" --preview-face-sizes 256 --tiles eac,cube --tile-size 256 --tile-face-size 2048 --native-tier typescript-worker --out build/projections-js
-node node/prepare-cli.mjs --input photograph.jpg --pose pose.json --attribution "Photographer" --preview-face-sizes 256 --tiles eac,cube --tile-size 256 --tile-face-size 2048 --native-tier single --out build/projections-wasm
+node node/prepare-cli.mjs --input photograph.jpg --pose pose.json --attribution "Photographer" --preview-face-sizes 256 --tiles eac,cube --tile-size 256 --tile-face-size 2048 --wasm-tier typescript-worker --out build/projections-js
+node node/prepare-cli.mjs --input photograph.jpg --pose pose.json --attribution "Photographer" --preview-face-sizes 256 --tiles eac,cube --tile-size 256 --tile-face-size 2048 --wasm-tier single --out build/projections-wasm
 ```
 
 For those face and tile settings, `photograph.jpg` must be at least 8192×4096
 and full-sphere, with the existing explicit pose and colour requirements. The
 synchronous JavaScript remains the default (`typescript`); `auto` also keeps
-it. The worker compares the first native output byte for byte with the
+it. The worker compares the first WASM output byte for byte with the
 complete JavaScript reference before accepting it. A missing module, a
 compilation or startup failure, a parity mismatch or an operation failure
 leaves the complete JavaScript worker path with an explicit reason. There is
 one preparation per worker, with bounded startup, a deadline and unconditional
 worker termination; a deadline error stops the job rather than accepting
-partial output. `prepared.json.nativeCores` records the requested and actual
+partial output. `prepared.json.wasmCores` records the requested and actual
 backend, parity, fallback, jobs, work, startup and preparation time, copy,
 live and memory counts, and source receipts. Check `actual: "wasm-single"` and
-`parity: "same"` before counting a native measurement. Photographs opened
+`parity: "same"` before counting a WASM measurement. Photographs opened
 directly in the browser and panorama scenes have no CPU reprojection job, so
 they never use this core.
 
@@ -123,7 +123,7 @@ limited to 256 MiB. A 4096² full-face output exceeds the output limit.
 Per-sample and batch sampling and `renderEquirectRegionWhole` keep the bounded
 whole-source ABI, so the 384 MiB source path applies to bulk face and tile
 preparation. There is no partial-output or automatic JavaScript fallback
-contract on native failure.
+contract on WASM failure.
 
 ## Build and checks
 
